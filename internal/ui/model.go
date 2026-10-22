@@ -321,34 +321,42 @@ func (m *Model) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	// left pane ~ 22 cols, rest for output, bottom for input + status
-	leftWidth := 24
-	if m.width < 80 {
+
+	// Fixed left sidebar, flexible output pane.
+	leftWidth := 26
+	if m.width < 90 {
+		leftWidth = 22
+	}
+	if m.width < 70 {
 		leftWidth = 18
 	}
-	rightWidth := m.width - leftWidth - 2
+
+	// Header (1) + gap + body + gap + input (3) + status (1) + help (1)
+	chrome := 9
+	contentHeight := m.height - chrome
+	if contentHeight < 6 {
+		contentHeight = 6
+	}
+
+	rightWidth := m.width - leftWidth - 1
 	if rightWidth < 20 {
 		rightWidth = 20
 	}
 
-	contentHeight := m.height - 8 // header + input + status + help
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
-
 	m.viewport.Width = rightWidth
 	m.viewport.Height = contentHeight
-	m.input.SetWidth(m.width - 4)
+	m.input.SetWidth(m.width - 2)
+	m.input.SetHeight(3)
 
-	// Keep markdown wrapping in sync with the output pane width.
-	if m.renderer != nil && rightWidth > 10 {
+	// Keep markdown wrapping in sync with the output pane.
+	if m.renderer != nil && rightWidth > 12 {
 		r, err := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(rightWidth-2),
+			glamour.WithWordWrap(rightWidth-4),
 		)
 		if err == nil {
 			m.renderer = r
-			m.lastContent = "" // force re-render with new width
+			m.lastContent = ""
 		}
 	}
 }
@@ -420,39 +428,80 @@ func (m *Model) renderMarkdown(src string) string {
 
 func (m Model) View() string {
 	if !m.ready {
-		return "Loading…"
+		return "\n  Loading Agent Fleet…"
 	}
 
-	header := titleStyle.Render(" Agent Fleet ") + "  " +
-		subtleStyle.Render("Cursor · OpenCode · Claude Code · Grok")
+	// ── Header ──────────────────────────────────────────────
+	title := titleStyle.Render(" Agent Fleet ")
+	subtitle := subtleStyle.Render("  multi-agent switcher")
+	header := lipgloss.JoinHorizontal(lipgloss.Center, title, subtitle)
+
+	// ── Body (sidebar + output) ─────────────────────────────
+	leftWidth := 26
+	if m.width < 90 {
+		leftWidth = 22
+	}
+	if m.width < 70 {
+		leftWidth = 18
+	}
+	rightWidth := m.width - leftWidth - 1
+	if rightWidth < 20 {
+		rightWidth = 20
+	}
 
 	left := m.renderAgentList()
 	right := m.viewport.View()
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		leftStyle.Width(24).Render(left),
-		rightStyle.Width(m.width-26).Render(right),
+	leftPane := leftStyle.Width(leftWidth).Height(m.viewport.Height).Render(left)
+	rightPane := rightStyle.Width(rightWidth).Height(m.viewport.Height).Render(right)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+
+	// ── Input ───────────────────────────────────────────────
+	inputBorderColor := lipgloss.Color("#374151")
+	if m.inputFocus {
+		inputBorderColor = lipgloss.Color("#7C3AED")
+	}
+	inputBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(inputBorderColor).
+		Padding(0, 1).
+		Width(m.width - 2).
+		Render(m.input.View())
+
+	// ── Status bar ──────────────────────────────────────────
+	cwd := m.manager.Cwd()
+	if len(cwd) > 40 {
+		cwd = "…" + cwd[len(cwd)-37:]
+	}
+	activeName := ""
+	if p := m.manager.Get(m.activeID); p != nil {
+		activeName = p.Name
+	}
+	statusLeft := fmt.Sprintf(" %s", m.statusMsg)
+	statusRight := fmt.Sprintf("%s  ·  %s  ·  %s ", activeName, cwd, time.Now().Format("15:04:05"))
+	gap := m.width - lipgloss.Width(statusLeft) - lipgloss.Width(statusRight)
+	if gap < 1 {
+		gap = 1
+	}
+	status := statusStyle.Width(m.width).Render(
+		statusLeft + strings.Repeat(" ", gap) + statusRight,
 	)
 
-	inputView := m.input.View()
-	if !m.inputFocus {
-		inputView = subtleStyle.Render(inputView)
-	}
-
-	status := statusStyle.Render(fmt.Sprintf(" %s  │  cwd: %s  │  %s ",
-		m.statusMsg, m.manager.Cwd(), time.Now().Format("15:04:05")))
-
-	helpView := ""
+	// ── Help ────────────────────────────────────────────────
+	var helpView string
 	if m.showHelp {
-		helpView = "\n" + m.help.View(m.keys)
+		helpView = m.help.View(m.keys)
 	} else {
-		helpView = "\n" + subtleStyle.Render(" ? help │ s start │ x stop │ r restart │ i input │ ctrl+l clear │ q quit ")
+		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  i input  ·  ctrl+l clear  ·  q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
+		"",
 		body,
-		inputStyle.Render(inputView),
+		"",
+		inputBox,
 		status,
 		helpView,
 	)
@@ -460,35 +509,49 @@ func (m Model) View() string {
 
 func (m Model) renderAgentList() string {
 	var b strings.Builder
-	b.WriteString(sectionStyle.Render(" AGENTS ") + "\n\n")
+	b.WriteString(sectionStyle.Render("AGENTS") + "\n")
 
 	for i, a := range m.agents {
-		cursor := "  "
+		selected := i == m.selected
+
+		var statusDot string
+		switch a.Status {
+		case process.StatusRunning:
+			statusDot = statusRun.Render("●")
+		case process.StatusError:
+			statusDot = statusErr.Render("●")
+		case process.StatusMissing:
+			statusDot = statusMiss.Render("●")
+		default:
+			statusDot = statusIdle.Render("●")
+		}
+
 		name := a.Name
-		if i == m.selected {
-			cursor = "▸ "
+		if selected {
 			name = selectedStyle.Render(a.Name)
 		}
 
-		var status string
-		switch a.Status {
-		case process.StatusRunning:
-			status = statusRun.Render("● running")
-		case process.StatusError:
-			status = statusErr.Render("● error")
-		case process.StatusMissing:
-			status = statusMiss.Render("● missing")
-		case process.StatusStopped:
-			status = statusIdle.Render("● stopped")
-		default:
-			status = statusIdle.Render("● idle")
+		// Active row gets a left bar + background feel
+		prefix := "  "
+		if selected {
+			prefix = activeBar.Render("▌") + " "
 		}
 
-		line := fmt.Sprintf("%s%s\n   %s\n", cursor, name, status)
-		b.WriteString(line)
+		line := fmt.Sprintf("%s%s %s", prefix, statusDot, name)
+		if selected {
+			line = selectedRow.Render(line)
+		}
+		b.WriteString(line + "\n")
+
+		// Secondary status text
+		st := string(a.Status)
+		if a.Status == process.StatusMissing {
+			st = "not found"
+		}
+		sec := subtleStyle.Render(fmt.Sprintf("    %s", st))
+		b.WriteString(sec + "\n")
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("↑↓ select · s start · r restart"))
 	return b.String()
 }
 
@@ -502,34 +565,33 @@ var (
 
 	subtleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
 
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#A78BFA"))
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E9D5FF"))
 
 	sectionStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#C4B5FD"))
+			Foreground(lipgloss.Color("#A78BFA")).
+			MarginBottom(1)
 
 	leftStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, true, false, false).
-			BorderForeground(lipgloss.Color("#374151")).
-			Padding(0, 1)
+			BorderForeground(lipgloss.Color("#27272A")).
+			Padding(0, 1, 0, 0)
 
 	rightStyle = lipgloss.NewStyle().
 			Padding(0, 1)
 
-	inputStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#7C3AED")).
-			Padding(0, 1)
-
 	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9CA3AF")).
-			Background(lipgloss.Color("#111827"))
+			Foreground(lipgloss.Color("#A1A1AA")).
+			Background(lipgloss.Color("#18181B"))
 
-	statusIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
+	statusIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B"))
 	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
 	statusErr  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
 	statusMiss = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
 
-	fleetLineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Italic(true)
-	promptLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
+	fleetLineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B")).Italic(true)
+	promptLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#C4B5FD")).Bold(true)
+
+	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
+	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1E1B2E"))
 )
