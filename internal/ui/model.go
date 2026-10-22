@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/feralxr/agent-fleet/internal/config"
 	"github.com/feralxr/agent-fleet/internal/process"
@@ -110,6 +111,7 @@ type Model struct {
 	input       textarea.Model
 	help        help.Model
 	keys        keyMap
+	renderer    *glamour.TermRenderer
 	width       int
 	height      int
 	showHelp    bool
@@ -117,6 +119,7 @@ type Model struct {
 	statusMsg   string
 	lastTick    time.Time
 	ready       bool
+	lastContent string // avoid unnecessary re-renders
 }
 
 // NewModel creates the initial UI model.
@@ -141,6 +144,12 @@ func NewModel() Model {
 
 	h := help.New()
 
+	// Soft dark theme that works well inside most terminals.
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(100),
+	)
+
 	m := Model{
 		manager:    mgr,
 		agents:     agents,
@@ -150,6 +159,7 @@ func NewModel() Model {
 		input:      ta,
 		help:       h,
 		keys:       defaultKeyMap(),
+		renderer:   r,
 		inputFocus: false,
 		statusMsg:  "Ready",
 	}
@@ -329,27 +339,83 @@ func (m *Model) layout() {
 	m.viewport.Width = rightWidth
 	m.viewport.Height = contentHeight
 	m.input.SetWidth(m.width - 4)
+
+	// Keep markdown wrapping in sync with the output pane width.
+	if m.renderer != nil && rightWidth > 10 {
+		r, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(rightWidth-2),
+		)
+		if err == nil {
+			m.renderer = r
+			m.lastContent = "" // force re-render with new width
+		}
+	}
 }
 
 func (m *Model) refreshViewport() {
 	p := m.manager.Get(m.activeID)
 	if p == nil {
-		m.viewport.SetContent("(no agent selected)")
+		m.setViewportContent("(no agent selected)")
 		return
 	}
+
 	lines := p.SnapshotOutput()
 	if len(lines) == 0 {
-		msg := fmt.Sprintf("%s is %s", p.Name, p.Status)
+		msg := fmt.Sprintf("%s is **%s**", p.Name, p.Status)
 		if p.Status == process.StatusMissing {
-			msg += fmt.Sprintf("\n\nBinary not found: %s\nInstall it or set FLEET_%s_CMD", p.CmdPath, strings.ToUpper(string(p.ID)))
+			msg += fmt.Sprintf("\n\nBinary not found: `%s`\n\nInstall it or set `FLEET_%s_CMD`", p.CmdPath, strings.ToUpper(string(p.ID)))
 		} else {
-			msg += "\n\nPress 's' to start."
+			msg += "\n\nPress `s` to start."
 		}
-		m.viewport.SetContent(msg)
+		m.setViewportContent(m.renderMarkdown(msg))
 		return
 	}
-	m.viewport.SetContent(strings.Join(lines, "\n"))
+
+	// Build content: style system/fleet lines differently, keep agent output clean.
+	var b strings.Builder
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "[fleet]"):
+			b.WriteString(fleetLineStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "› "):
+			b.WriteString(promptLineStyle.Render(line) + "\n")
+		default:
+			b.WriteString(line + "\n")
+		}
+	}
+
+	content := b.String()
+
+	// Try markdown rendering on the whole buffer for code blocks etc.
+	// Fall back to styled plain text if glamour fails or is too slow on huge buffers.
+	if len(lines) < 400 && m.renderer != nil {
+		if rendered, err := m.renderer.Render(content); err == nil {
+			content = rendered
+		}
+	}
+
+	m.setViewportContent(content)
+}
+
+func (m *Model) setViewportContent(content string) {
+	if content == m.lastContent {
+		return // skip identical re-render
+	}
+	m.lastContent = content
+	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
+}
+
+func (m *Model) renderMarkdown(src string) string {
+	if m.renderer == nil {
+		return src
+	}
+	out, err := m.renderer.Render(src)
+	if err != nil {
+		return src
+	}
+	return out
 }
 
 func (m Model) View() string {
@@ -463,4 +529,7 @@ var (
 	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
 	statusErr  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
 	statusMiss = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
+
+	fleetLineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Italic(true)
+	promptLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
 )
