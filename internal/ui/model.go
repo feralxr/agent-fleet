@@ -28,7 +28,8 @@ type keyMap struct {
 	Help     key.Binding
 	Start    key.Binding
 	Stop     key.Binding
-	Switch   key.Binding
+	Restart  key.Binding
+	Clear    key.Binding
 	FocusIn  key.Binding
 	FocusOut key.Binding
 	Copy     key.Binding
@@ -64,9 +65,13 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("x"),
 			key.WithHelp("x", "stop agent"),
 		),
-		Switch: key.NewBinding(
-			key.WithKeys("tab"),
-			key.WithHelp("tab", "switch focus"),
+		Restart: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "restart agent"),
+		),
+		Clear: key.NewBinding(
+			key.WithKeys("ctrl+l"),
+			key.WithHelp("ctrl+l", "clear output"),
 		),
 		FocusIn: key.NewBinding(
 			key.WithKeys("i"),
@@ -84,13 +89,13 @@ func defaultKeyMap() keyMap {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.FocusIn, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Restart, k.FocusIn, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Start, k.Stop},
-		{k.FocusIn, k.FocusOut, k.Enter, k.Copy},
+		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
+		{k.FocusIn, k.FocusOut, k.Enter, k.Clear},
 		{k.Help, k.Quit},
 	}
 }
@@ -242,14 +247,31 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case key.Matches(msg, m.keys.Restart):
+		id := m.agents[m.selected].ID
+		if err := m.manager.Restart(id); err != nil {
+			m.statusMsg = fmt.Sprintf("restart failed: %v", err)
+		} else {
+			m.statusMsg = fmt.Sprintf("restarted %s", m.agents[m.selected].Name)
+			m.activeID = id
+		}
+		m.agents = m.manager.List()
+		m.refreshViewport()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Clear):
+		id := m.agents[m.selected].ID
+		m.manager.ClearOutput(id)
+		m.statusMsg = "output cleared"
+		m.refreshViewport()
+		return m, nil
+
 	case key.Matches(msg, m.keys.FocusIn):
 		m.inputFocus = true
 		m.input.Focus()
 		return m, textarea.Blink
 
 	case key.Matches(msg, m.keys.Copy):
-		// best-effort: copy last few lines to clipboard is platform specific;
-		// for now just flash a message. Real clipboard can be added later.
 		m.statusMsg = "copy not implemented yet (coming soon)"
 		return m, nil
 	}
@@ -317,7 +339,13 @@ func (m *Model) refreshViewport() {
 	}
 	lines := p.SnapshotOutput()
 	if len(lines) == 0 {
-		m.viewport.SetContent(fmt.Sprintf("%s is %s\n\nPress 's' to start.", p.Name, p.Status))
+		msg := fmt.Sprintf("%s is %s", p.Name, p.Status)
+		if p.Status == process.StatusMissing {
+			msg += fmt.Sprintf("\n\nBinary not found: %s\nInstall it or set FLEET_%s_CMD", p.CmdPath, strings.ToUpper(string(p.ID)))
+		} else {
+			msg += "\n\nPress 's' to start."
+		}
+		m.viewport.SetContent(msg)
 		return
 	}
 	m.viewport.SetContent(strings.Join(lines, "\n"))
@@ -352,7 +380,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = "\n" + m.help.View(m.keys)
 	} else {
-		helpView = "\n" + subtleStyle.Render(" ? help  │  s start  │  x stop  │  i input  │  ↑↓ select  │  q quit ")
+		helpView = "\n" + subtleStyle.Render(" ? help │ s start │ x stop │ r restart │ i input │ ctrl+l clear │ q quit ")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -376,21 +404,25 @@ func (m Model) renderAgentList() string {
 			name = selectedStyle.Render(a.Name)
 		}
 
-		status := statusIdle.Render("● idle")
+		var status string
 		switch a.Status {
 		case process.StatusRunning:
 			status = statusRun.Render("● running")
 		case process.StatusError:
 			status = statusErr.Render("● error")
+		case process.StatusMissing:
+			status = statusMiss.Render("● missing")
 		case process.StatusStopped:
 			status = statusIdle.Render("● stopped")
+		default:
+			status = statusIdle.Render("● idle")
 		}
 
 		line := fmt.Sprintf("%s%s\n   %s\n", cursor, name, status)
 		b.WriteString(line)
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("tab / ↑↓ to select"))
+	b.WriteString("\n" + subtleStyle.Render("↑↓ select · s start · r restart"))
 	return b.String()
 }
 
@@ -430,4 +462,5 @@ var (
 	statusIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
 	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
 	statusErr  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
+	statusMiss = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
 )
