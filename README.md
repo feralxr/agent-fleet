@@ -11,12 +11,14 @@ Supports:
 
 ## Features
 
-- Launch / stop any agent with a single key
+- Launch / stop / restart any agent with a single key
 - Quickly switch the active agent
 - Shared working directory
-- Live output view for the selected agent
-- Shared prompt input that is sent to the currently active agent
-- Status indicators (idle / running / error)
+- Live output view with markdown rendering
+- Shared prompt input sent to the active agent
+- Status indicators (idle / running / error / missing)
+- Session persistence (remembers last cwd + active agent)
+- Copy output to clipboard
 - Keyboard-first interface
 - Clean multi-pane layout
 
@@ -42,21 +44,24 @@ fleet
 
 ### Keybindings
 
-| Key        | Action                      |
-|------------|-----------------------------|
-| `↑` / `k`  | Previous agent              |
-| `↓` / `j`  | Next agent                  |
-| `s`        | Start selected agent        |
-| `x`        | Stop selected agent         |
-| `i`        | Focus prompt input          |
-| `Esc`      | Unfocus prompt input        |
-| `Enter`    | Send prompt to active agent |
-| `?`        | Toggle help                 |
-| `q`        | Quit                        |
+| Key        | Action                        |
+|------------|-------------------------------|
+| `↑` / `k`  | Previous agent                |
+| `↓` / `j`  | Next agent                    |
+| `s`        | Start selected agent          |
+| `x`        | Stop selected agent           |
+| `r`        | Restart selected agent        |
+| `i`        | Focus prompt input            |
+| `Esc`      | Unfocus prompt input          |
+| `Enter`    | Send prompt to active agent   |
+| `c`        | Copy output to clipboard      |
+| `ctrl+l`   | Clear output                  |
+| `?`        | Toggle help                   |
+| `q`        | Quit (saves session)          |
 
 ## Configuration
 
-The tool looks for the following commands on your `$PATH` (or you can override them):
+### Command overrides
 
 | Agent       | Default command | Override env var     |
 |-------------|-----------------|----------------------|
@@ -65,13 +70,20 @@ The tool looks for the following commands on your `$PATH` (or you can override t
 | OpenCode    | `opencode`      | `FLEET_OPENCODE_CMD` |
 | Grok        | `grok`          | `FLEET_GROK_CMD`     |
 
-Example:
-
 ```bash
 export FLEET_CLAUDE_CMD="claude"
 export FLEET_CURSOR_CMD="cursor"
 fleet
 ```
+
+### Session
+
+On quit, Agent Fleet saves:
+
+- Last working directory
+- Last active agent
+
+to `~/.config/agent-fleet/session.json` and restores them on the next launch.
 
 ## Requirements
 

@@ -50,26 +50,30 @@ type AgentProcess struct {
 
 // Manager owns all agent processes.
 type Manager struct {
-	agents map[config.AgentID]*AgentProcess
-	mu     sync.RWMutex
-	cwd    string
+	agents  map[config.AgentID]*AgentProcess
+	configs []config.AgentConfig
+	mu      sync.RWMutex
+	cwd     string
 }
 
 // NewManager creates a process manager rooted at the given working directory.
-func NewManager(cwd string) *Manager {
+// Pass a session to apply custom command overrides; nil is fine.
+func NewManager(cwd string, session *config.Session) *Manager {
+	cfgs := config.DefaultAgentsWithSession(session)
 	m := &Manager{
-		agents: make(map[config.AgentID]*AgentProcess),
-		cwd:    cwd,
+		agents:  make(map[config.AgentID]*AgentProcess),
+		configs: cfgs,
+		cwd:     cwd,
 	}
 
-	for _, a := range config.DefaultAgents() {
+	for _, a := range cfgs {
 		p := &AgentProcess{
 			ID:     a.ID,
 			Name:   a.Name,
 			Status: StatusIdle,
 			Output: make([]string, 0, 128),
 		}
-		p.probe()
+		p.probeWith(a)
 		m.agents[a.ID] = p
 	}
 	return m
@@ -81,7 +85,7 @@ func (m *Manager) List() []*AgentProcess {
 	defer m.mu.RUnlock()
 
 	out := make([]*AgentProcess, 0, len(m.agents))
-	for _, a := range config.DefaultAgents() {
+	for _, a := range m.configs {
 		if p, ok := m.agents[a.ID]; ok {
 			out = append(out, p)
 		}
@@ -111,14 +115,14 @@ func (m *Manager) Start(id config.AgentID) error {
 	}
 
 	// Re-probe in case the binary appeared after startup.
-	p.probe()
+	p.probe(m)
 	if !p.Available {
 		p.Status = StatusMissing
 		p.append(fmt.Sprintf("[fleet] binary not found: %s", p.CmdPath))
 		return fmt.Errorf("%s binary not found on PATH (%s)", p.Name, p.CmdPath)
 	}
 
-	cfg := findConfig(id)
+	cfg := m.findConfig(id)
 	if cfg == nil {
 		return fmt.Errorf("no config for agent %s", id)
 	}
@@ -304,16 +308,8 @@ func (p *AgentProcess) SnapshotOutput() []string {
 	return out
 }
 
-// probe checks whether the configured binary exists.
-func (p *AgentProcess) probe() {
-	cfg := findConfig(p.ID)
-	if cfg == nil {
-		p.Available = false
-		p.CmdPath = ""
-		p.Status = StatusMissing
-		return
-	}
-
+// probeWith checks whether the configured binary exists.
+func (p *AgentProcess) probeWith(cfg config.AgentConfig) {
 	path, err := exec.LookPath(cfg.Command)
 	if err != nil {
 		p.Available = false
@@ -329,6 +325,18 @@ func (p *AgentProcess) probe() {
 	if p.Status == StatusMissing {
 		p.Status = StatusIdle
 	}
+}
+
+// probe re-checks using the manager's config list.
+func (p *AgentProcess) probe(m *Manager) {
+	cfg := m.findConfig(p.ID)
+	if cfg == nil {
+		p.Available = false
+		p.CmdPath = ""
+		p.Status = StatusMissing
+		return
+	}
+	p.probeWith(*cfg)
 }
 
 func (m *Manager) stream(p *AgentProcess, r io.Reader, _ string) {
@@ -388,10 +396,10 @@ func (p *AgentProcess) append(line string) {
 	}
 }
 
-func findConfig(id config.AgentID) *config.AgentConfig {
-	for _, a := range config.DefaultAgents() {
+func (m *Manager) findConfig(id config.AgentID) *config.AgentConfig {
+	for _, a := range m.configs {
 		if a.ID == id {
-			cp := a // copy
+			cp := a
 			return &cp
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -112,6 +113,7 @@ type Model struct {
 	help        help.Model
 	keys        keyMap
 	renderer    *glamour.TermRenderer
+	session     config.Session
 	width       int
 	height      int
 	showHelp    bool
@@ -124,13 +126,33 @@ type Model struct {
 
 // NewModel creates the initial UI model.
 func NewModel() Model {
+	session := config.LoadSession()
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
 	}
+	// Prefer last used working directory if it still exists.
+	if session.LastCwd != "" {
+		if st, err := os.Stat(session.LastCwd); err == nil && st.IsDir() {
+			cwd = session.LastCwd
+		}
+	}
 
-	mgr := process.NewManager(cwd)
+	mgr := process.NewManager(cwd, &session)
 	agents := mgr.List()
+
+	selected := 0
+	activeID := agents[0].ID
+	if session.LastAgentID != "" {
+		for i, a := range agents {
+			if a.ID == session.LastAgentID {
+				selected = i
+				activeID = a.ID
+				break
+			}
+		}
+	}
 
 	ta := textarea.New()
 	ta.Placeholder = "Type a prompt and press Enter to send to the active agent…"
@@ -140,11 +162,10 @@ func NewModel() Model {
 	ta.Focus()
 
 	vp := viewport.New(80, 20)
-	vp.SetContent("Welcome to Agent Fleet\n\nSelect an agent on the left and press 's' to start it.")
+	vp.SetContent("Welcome to Agent Fleet\n\nSelect an agent on the left and press `s` to start it.")
 
 	h := help.New()
 
-	// Soft dark theme that works well inside most terminals.
 	r, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -153,13 +174,14 @@ func NewModel() Model {
 	m := Model{
 		manager:    mgr,
 		agents:     agents,
-		selected:   0,
-		activeID:   agents[0].ID,
+		selected:   selected,
+		activeID:   activeID,
 		viewport:   vp,
 		input:      ta,
 		help:       h,
 		keys:       defaultKeyMap(),
 		renderer:   r,
+		session:    session,
 		inputFocus: false,
 		statusMsg:  "Ready",
 	}
@@ -215,6 +237,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, a := range m.agents {
 			_ = m.manager.Stop(a.ID)
 		}
+		// persist session
+		m.session.LastCwd = m.manager.Cwd()
+		m.session.LastAgentID = m.activeID
+		_ = config.SaveSession(m.session)
 		return m, tea.Quit
 
 	case key.Matches(msg, m.keys.Help):
@@ -282,7 +308,27 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textarea.Blink
 
 	case key.Matches(msg, m.keys.Copy):
-		m.statusMsg = "copy not implemented yet (coming soon)"
+		p := m.manager.Get(m.activeID)
+		if p == nil {
+			m.statusMsg = "nothing to copy"
+			return m, nil
+		}
+		lines := p.SnapshotOutput()
+		if len(lines) == 0 {
+			m.statusMsg = "nothing to copy"
+			return m, nil
+		}
+		// Copy last 200 lines max to keep clipboard reasonable.
+		start := 0
+		if len(lines) > 200 {
+			start = len(lines) - 200
+		}
+		text := strings.Join(lines[start:], "\n")
+		if err := clipboard.WriteAll(text); err != nil {
+			m.statusMsg = fmt.Sprintf("copy failed: %v", err)
+		} else {
+			m.statusMsg = fmt.Sprintf("copied %d lines", len(lines)-start)
+		}
 		return m, nil
 	}
 
@@ -493,7 +539,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  i input  ·  ctrl+l clear  ·  q quit")
+		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  i input  ·  c copy  ·  ctrl+l clear  ·  q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
