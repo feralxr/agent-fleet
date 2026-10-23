@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/feralxr/agent-fleet/internal/config"
+	"github.com/feralxr/agent-fleet/internal/gitutil"
 	"github.com/feralxr/agent-fleet/internal/process"
 )
 
@@ -38,6 +39,8 @@ type keyMap struct {
 	Copy     key.Binding
 	Cwd      key.Binding
 	Split    key.Binding
+	Worktree key.Binding
+	Fan      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -98,18 +101,27 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("v"),
 			key.WithHelp("v", "toggle split view"),
 		),
+		Worktree: key.NewBinding(
+			key.WithKeys("w"),
+			key.WithHelp("w", "create worktree"),
+		),
+		Fan: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "fan prompt to all"),
+		),
 	}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Restart, k.Cwd, k.Split, k.FocusIn, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Worktree, k.Fan, k.Cwd, k.Split, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
+		{k.Worktree, k.Fan, k.Cwd, k.Split},
 		{k.FocusIn, k.FocusOut, k.Enter, k.Clear, k.Copy},
-		{k.Cwd, k.Split, k.Help, k.Quit},
+		{k.Help, k.Quit},
 	}
 }
 
@@ -131,6 +143,7 @@ type Model struct {
 	showHelp     bool
 	inputFocus   bool
 	pathMode     bool // true when editing working directory
+	fanMode      bool // next prompt fans to all running agents
 	split        bool // side-by-side output of two agents
 	statusMsg    string
 	lastTick     time.Time
@@ -202,6 +215,7 @@ func NewModel() Model {
 		session:    session,
 		inputFocus: false,
 		pathMode:   false,
+		fanMode:    false,
 		split:      false,
 		statusMsg:  "Ready",
 	}
@@ -260,6 +274,12 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// persist session
 		m.session.LastCwd = m.manager.Cwd()
 		m.session.LastAgentID = m.activeID
+		m.session.Worktrees = map[string]string{}
+		for _, a := range m.agents {
+			if wt := m.manager.Worktree(a.ID); wt != "" {
+				m.session.Worktrees[string(a.ID)] = wt
+			}
+		}
 		_ = config.SaveSession(m.session)
 		return m, tea.Quit
 
@@ -342,6 +362,19 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case key.Matches(msg, m.keys.Worktree):
+		return m.ensureWorktree()
+
+	case key.Matches(msg, m.keys.Fan):
+		// Fan mode: next Enter sends to all running agents
+		m.inputFocus = true
+		m.input.Placeholder = "Fan-out: type prompt, Enter sends to ALL running agents…"
+		m.input.Focus()
+		m.statusMsg = "fan-out mode — prompt will go to every running agent"
+		// reuse pathMode flag? better a fanMode
+		m.fanMode = true
+		return m, textarea.Blink
+
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode {
 			return m, nil
@@ -384,6 +417,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.FocusOut):
 		m.inputFocus = false
 		m.pathMode = false
+		m.fanMode = false
 		m.input.Blur()
 		m.input.Reset()
 		m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
@@ -419,6 +453,34 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.fanMode {
+			n := 0
+			var lastErr error
+			for _, a := range m.agents {
+				if a.Status == process.StatusRunning {
+					if err := m.manager.Send(a.ID, text); err != nil {
+						lastErr = err
+					} else {
+						n++
+					}
+				}
+			}
+			m.fanMode = false
+			m.inputFocus = false
+			m.input.Blur()
+			m.input.Reset()
+			m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
+			if n == 0 {
+				m.statusMsg = "fan-out: no running agents"
+			} else if lastErr != nil {
+				m.statusMsg = fmt.Sprintf("fan-out: sent to %d (errors: %v)", n, lastErr)
+			} else {
+				m.statusMsg = fmt.Sprintf("fan-out: sent to %d agents", n)
+			}
+			m.refreshViewport()
+			return m, nil
+		}
+
 		err := m.manager.Send(m.activeID, text)
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("send failed: %v", err)
@@ -433,6 +495,35 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
+	cwd := m.manager.Cwd()
+	if !gitutil.IsRepo(cwd) {
+		m.statusMsg = "not a git repo — worktrees need a repository"
+		return m, nil
+	}
+	root, err := gitutil.Root(cwd)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("git root: %v", err)
+		return m, nil
+	}
+	id := m.agents[m.selected].ID
+	wt, err := gitutil.EnsureWorktree(root, string(id))
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("worktree failed: %v", err)
+		return m, nil
+	}
+	m.manager.SetWorktree(id, wt)
+	// persist immediately
+	if m.session.Worktrees == nil {
+		m.session.Worktrees = map[string]string{}
+	}
+	m.session.Worktrees[string(id)] = wt
+	_ = config.SaveSession(m.session)
+	m.statusMsg = fmt.Sprintf("worktree ready: %s", gitutil.ShortName(wt))
+	m.agents = m.manager.List()
+	return m, nil
 }
 
 func (m *Model) layout() {
@@ -656,7 +747,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  d cwd  ·  v split  ·  i input  ·  c copy  ·  q quit")
+		helpView = subtleStyle.Render(" ? help · s start · w worktree · f fan · d cwd · v split · i input · c copy · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -712,6 +803,11 @@ func (m Model) renderAgentList() string {
 			st = "not found"
 			if a.CmdPath != "" {
 				st = "missing: " + a.ShortPath()
+			}
+		} else if a.WorktreePath != "" {
+			st = "wt:" + gitutil.ShortName(a.WorktreePath)
+			if a.Status == process.StatusRunning {
+				st += " · running"
 			}
 		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
 			st = a.ShortPath()

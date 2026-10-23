@@ -7,15 +7,14 @@ Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
 ## Features
 
 - Launch / stop / restart any agent
-- Switch active agent instantly
-- **Split view** — watch two agents side-by-side
-- Change working directory from inside the TUI
-- Shared prompt input
-- Live output with markdown rendering
-- Session persistence (last cwd + active agent)
-- Copy output to clipboard
-- Binary detection (shows missing agents clearly)
-- Keyboard-first interface
+- **Git worktrees per agent** — isolated checkouts so agents don't clash
+- **Fan-out** — send one prompt to every running agent
+- Split view (watch two agents at once)
+- Change working directory from the TUI
+- Shared prompt input + live markdown output
+- Session persistence (cwd, active agent, worktrees)
+- Clipboard copy
+- Binary detection
 
 ## Install
 
@@ -34,35 +33,48 @@ go build -o fleet ./cmd/fleet
 ## Usage
 
 ```bash
+cd /path/to/your/repo
 fleet
 ```
 
 ### Keybindings
 
-| Key        | Action                        |
-|------------|-------------------------------|
-| `↑` / `k`  | Previous agent                |
-| `↓` / `j`  | Next agent                    |
-| `s`        | Start selected agent          |
-| `x`        | Stop selected agent           |
-| `r`        | Restart selected agent        |
-| `d`        | Change working directory      |
-| `v`        | Toggle split view             |
-| `i`        | Focus prompt input            |
-| `Esc`      | Cancel / unfocus              |
-| `Enter`    | Send prompt / confirm path    |
-| `c`        | Copy output to clipboard      |
-| `ctrl+l`   | Clear output                  |
-| `?`        | Toggle help                   |
-| `q`        | Quit (saves session)          |
+| Key        | Action                                      |
+|------------|---------------------------------------------|
+| `↑` / `k`  | Previous agent                              |
+| `↓` / `j`  | Next agent                                  |
+| `s`        | Start selected agent                        |
+| `x`        | Stop selected agent                         |
+| `r`        | Restart selected agent                      |
+| `w`        | Create / attach git worktree for agent      |
+| `f`        | Fan-out mode (next prompt → all running)    |
+| `d`        | Change working directory                    |
+| `v`        | Toggle split view                           |
+| `i`        | Focus prompt input                          |
+| `Esc`      | Cancel / unfocus                            |
+| `Enter`    | Send prompt / confirm path / fan-out        |
+| `c`        | Copy output to clipboard                    |
+| `ctrl+l`   | Clear output                                |
+| `?`        | Toggle help                                 |
+| `q`        | Quit (saves session)                        |
 
-### Split view
+### Worktrees
 
-Press `v` to show the selected agent and a neighbor side-by-side. Press `v` again to return to single pane.
+Press `w` on an agent while inside a git repo. Fleet creates:
 
-### Change directory
+```
+<repo>/.fleet/worktrees/<agent-id>
+```
 
-Press `d`, type a path, press Enter. Invalid paths are rejected. The new cwd is saved in the session.
+on branch `fleet/<agent-id>`. That agent then runs with its cwd set to the worktree so parallel edits don't collide.
+
+Add `.fleet/` to your repo's `.gitignore` if you want to keep worktrees local-only.
+
+### Fan-out
+
+1. Start two or more agents (`s`)
+2. Press `f`
+3. Type a prompt and press Enter — every running agent receives it
 
 ## Configuration
 
@@ -78,6 +90,7 @@ Session file: `~/.config/agent-fleet/session.json`
 ## Requirements
 
 - Go 1.22+
+- `git` on PATH (for worktrees)
 - Agent CLIs installed and on `$PATH`
 
 ## License

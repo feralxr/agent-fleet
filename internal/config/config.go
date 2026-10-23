@@ -27,9 +27,10 @@ type AgentConfig struct {
 
 // Session holds persisted UI state between runs.
 type Session struct {
-	LastCwd      string  `json:"last_cwd"`
-	LastAgentID  AgentID `json:"last_agent_id"`
+	LastCwd      string            `json:"last_cwd"`
+	LastAgentID  AgentID           `json:"last_agent_id"`
 	CustomCmds   map[string]string `json:"custom_cmds,omitempty"` // agent id -> command override
+	Worktrees    map[string]string `json:"worktrees,omitempty"`   // agent id -> worktree path
 }
 
 // DefaultAgents returns the built-in agent definitions.

@@ -32,11 +32,12 @@ const (
 
 // AgentProcess tracks a single agent instance.
 type AgentProcess struct {
-	ID        config.AgentID
-	Name      string
-	Status    Status
-	Available bool // true if the binary exists on PATH
-	CmdPath   string
+	ID          config.AgentID
+	Name        string
+	Status      Status
+	Available   bool // true if the binary exists on PATH
+	CmdPath     string
+	WorktreePath string // optional isolated git worktree
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -73,6 +74,13 @@ func NewManager(cwd string, session *config.Session) *Manager {
 			Name:   a.Name,
 			Status: StatusIdle,
 			Output: make([]string, 0, 128),
+		}
+		if session != nil && session.Worktrees != nil {
+			if wt, ok := session.Worktrees[string(a.ID)]; ok && wt != "" {
+				if st, err := os.Stat(wt); err == nil && st.IsDir() {
+					p.WorktreePath = wt
+				}
+			}
 		}
 		p.probeWith(a)
 		m.agents[a.ID] = p
@@ -129,7 +137,11 @@ func (m *Manager) Start(id config.AgentID) error {
 	}
 
 	cmd := exec.Command(cfg.Command, cfg.Args...)
-	cmd.Dir = m.cwd
+	runDir := m.cwd
+	if p.WorktreePath != "" {
+		runDir = p.WorktreePath
+	}
+	cmd.Dir = runDir
 	cmd.Env = os.Environ()
 
 	// Create all pipes *before* Start so we keep a live stdin handle.
@@ -167,7 +179,7 @@ func (m *Manager) Start(id config.AgentID) error {
 	if len(cfg.Args) > 0 {
 		cmdLine += " " + strings.Join(cfg.Args, " ")
 	}
-	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d) in %s", p.Name, cmdLine, cmd.Process.Pid, m.cwd))
+	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
 
 	go m.stream(p, stdout, "out")
 	go m.stream(p, stderr, "err")
@@ -281,6 +293,35 @@ func (m *Manager) ClearOutput(id config.AgentID) {
 	p.mu.Lock()
 	p.Output = p.Output[:0]
 	p.mu.Unlock()
+}
+
+// SetWorktree assigns an isolated worktree path to an agent (empty clears it).
+func (m *Manager) SetWorktree(id config.AgentID, path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.agents[id]; ok {
+		p.WorktreePath = path
+	}
+}
+
+// Worktree returns the worktree path for an agent (may be empty).
+func (m *Manager) Worktree(id config.AgentID) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if p, ok := m.agents[id]; ok {
+		return p.WorktreePath
+	}
+	return ""
+}
+
+// EffectiveCwd is the directory the agent will run in (worktree or shared cwd).
+func (m *Manager) EffectiveCwd(id config.AgentID) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if p, ok := m.agents[id]; ok && p.WorktreePath != "" {
+		return p.WorktreePath
+	}
+	return m.cwd
 }
 
 // SetCwd updates the working directory used for new processes.
