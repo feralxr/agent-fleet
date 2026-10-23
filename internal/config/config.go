@@ -45,22 +45,23 @@ func DefaultAgentsWithSession(s *Session) []AgentConfig {
 			ID:          AgentClaude,
 			Name:        "Claude Code",
 			Command:     "claude",
-			Args:        []string{},
-			Description: "Anthropic Claude Code agent",
+			Args:        []string{}, // interactive REPL by default
+			Description: "Anthropic Claude Code (claude)",
 		},
 		{
 			ID:          AgentCursor,
 			Name:        "Cursor",
+			// Prefer `cursor agent` when available; override with FLEET_CURSOR_CMD
 			Command:     "cursor",
 			Args:        []string{"agent"},
-			Description: "Cursor CLI agent",
+			Description: "Cursor agent CLI",
 		},
 		{
 			ID:          AgentOpenCode,
 			Name:        "OpenCode",
 			Command:     "opencode",
 			Args:        []string{},
-			Description: "OpenCode agent",
+			Description: "OpenCode coding agent",
 		},
 		{
 			ID:          AgentGrok,

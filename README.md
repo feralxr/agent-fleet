@@ -2,25 +2,20 @@
 
 Lightweight terminal UI for running and switching between multiple coding agents side-by-side.
 
-Supports:
-
-- **Claude Code**
-- **Cursor**
-- **OpenCode**
-- **Grok**
+Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
 
 ## Features
 
-- Launch / stop / restart any agent with a single key
-- Quickly switch the active agent
-- Shared working directory
-- Live output view with markdown rendering
-- Shared prompt input sent to the active agent
-- Status indicators (idle / running / error / missing)
-- Session persistence (remembers last cwd + active agent)
+- Launch / stop / restart any agent
+- Switch active agent instantly
+- **Split view** — watch two agents side-by-side
+- Change working directory from inside the TUI
+- Shared prompt input
+- Live output with markdown rendering
+- Session persistence (last cwd + active agent)
 - Copy output to clipboard
+- Binary detection (shows missing agents clearly)
 - Keyboard-first interface
-- Clean multi-pane layout
 
 ## Install
 
@@ -28,7 +23,7 @@ Supports:
 go install github.com/feralxr/agent-fleet/cmd/fleet@latest
 ```
 
-Or build from source:
+Or from source:
 
 ```bash
 git clone https://github.com/feralxr/agent-fleet.git
@@ -51,17 +46,25 @@ fleet
 | `s`        | Start selected agent          |
 | `x`        | Stop selected agent           |
 | `r`        | Restart selected agent        |
+| `d`        | Change working directory      |
+| `v`        | Toggle split view             |
 | `i`        | Focus prompt input            |
-| `Esc`      | Unfocus prompt input          |
-| `Enter`    | Send prompt to active agent   |
+| `Esc`      | Cancel / unfocus              |
+| `Enter`    | Send prompt / confirm path    |
 | `c`        | Copy output to clipboard      |
 | `ctrl+l`   | Clear output                  |
 | `?`        | Toggle help                   |
 | `q`        | Quit (saves session)          |
 
-## Configuration
+### Split view
 
-### Command overrides
+Press `v` to show the selected agent and a neighbor side-by-side. Press `v` again to return to single pane.
+
+### Change directory
+
+Press `d`, type a path, press Enter. Invalid paths are rejected. The new cwd is saved in the session.
+
+## Configuration
 
 | Agent       | Default command | Override env var     |
 |-------------|-----------------|----------------------|
@@ -70,25 +73,12 @@ fleet
 | OpenCode    | `opencode`      | `FLEET_OPENCODE_CMD` |
 | Grok        | `grok`          | `FLEET_GROK_CMD`     |
 
-```bash
-export FLEET_CLAUDE_CMD="claude"
-export FLEET_CURSOR_CMD="cursor"
-fleet
-```
-
-### Session
-
-On quit, Agent Fleet saves:
-
-- Last working directory
-- Last active agent
-
-to `~/.config/agent-fleet/session.json` and restores them on the next launch.
+Session file: `~/.config/agent-fleet/session.json`
 
 ## Requirements
 
 - Go 1.22+
-- The agent CLIs you want to use must be installed and available in `$PATH`
+- Agent CLIs installed and on `$PATH`
 
 ## License
 

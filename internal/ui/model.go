@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type keyMap struct {
 	FocusIn  key.Binding
 	FocusOut key.Binding
 	Copy     key.Binding
+	Cwd      key.Binding
+	Split    key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -49,7 +52,7 @@ func defaultKeyMap() keyMap {
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", "send prompt"),
+			key.WithHelp("enter", "send / confirm"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "q"),
@@ -81,47 +84,59 @@ func defaultKeyMap() keyMap {
 		),
 		FocusOut: key.NewBinding(
 			key.WithKeys("esc"),
-			key.WithHelp("esc", "unfocus input"),
+			key.WithHelp("esc", "cancel / unfocus"),
 		),
 		Copy: key.NewBinding(
 			key.WithKeys("c"),
-			key.WithHelp("c", "copy last output"),
+			key.WithHelp("c", "copy output"),
+		),
+		Cwd: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "change directory"),
+		),
+		Split: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "toggle split view"),
 		),
 	}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Restart, k.FocusIn, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Restart, k.Cwd, k.Split, k.FocusIn, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
-		{k.FocusIn, k.FocusOut, k.Enter, k.Clear},
-		{k.Help, k.Quit},
+		{k.FocusIn, k.FocusOut, k.Enter, k.Clear, k.Copy},
+		{k.Cwd, k.Split, k.Help, k.Quit},
 	}
 }
 
 // Model is the main Bubble Tea model.
 type Model struct {
-	manager     *process.Manager
-	agents      []*process.AgentProcess
-	selected    int
-	activeID    config.AgentID
-	viewport    viewport.Model
-	input       textarea.Model
-	help        help.Model
-	keys        keyMap
-	renderer    *glamour.TermRenderer
-	session     config.Session
-	width       int
-	height      int
-	showHelp    bool
-	inputFocus  bool
-	statusMsg   string
-	lastTick    time.Time
-	ready       bool
-	lastContent string // avoid unnecessary re-renders
+	manager      *process.Manager
+	agents       []*process.AgentProcess
+	selected     int
+	activeID     config.AgentID
+	viewport     viewport.Model
+	viewport2    viewport.Model // secondary pane for split view
+	input        textarea.Model
+	help         help.Model
+	keys         keyMap
+	renderer     *glamour.TermRenderer
+	session      config.Session
+	width        int
+	height       int
+	showHelp     bool
+	inputFocus   bool
+	pathMode     bool // true when editing working directory
+	split        bool // side-by-side output of two agents
+	statusMsg    string
+	lastTick     time.Time
+	ready        bool
+	lastContent  string
+	lastContent2 string
 }
 
 // NewModel creates the initial UI model.
@@ -163,6 +178,8 @@ func NewModel() Model {
 
 	vp := viewport.New(80, 20)
 	vp.SetContent("Welcome to Agent Fleet\n\nSelect an agent on the left and press `s` to start it.")
+	vp2 := viewport.New(40, 20)
+	vp2.SetContent("")
 
 	h := help.New()
 
@@ -177,12 +194,15 @@ func NewModel() Model {
 		selected:   selected,
 		activeID:   activeID,
 		viewport:   vp,
+		viewport2:  vp2,
 		input:      ta,
 		help:       h,
 		keys:       defaultKeyMap(),
 		renderer:   r,
 		session:    session,
 		inputFocus: false,
+		pathMode:   false,
+		split:      false,
 		statusMsg:  "Ready",
 	}
 	return m
@@ -302,8 +322,32 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
-	case key.Matches(msg, m.keys.FocusIn):
+	case key.Matches(msg, m.keys.Cwd):
+		m.pathMode = true
 		m.inputFocus = true
+		m.input.SetValue(m.manager.Cwd())
+		m.input.Placeholder = "Enter working directory path…"
+		m.input.Focus()
+		m.statusMsg = "change directory — Enter to confirm, Esc to cancel"
+		return m, textarea.Blink
+
+	case key.Matches(msg, m.keys.Split):
+		m.split = !m.split
+		if m.split {
+			m.statusMsg = "split view on"
+		} else {
+			m.statusMsg = "split view off"
+		}
+		m.layout()
+		m.refreshViewport()
+		return m, nil
+
+	case key.Matches(msg, m.keys.FocusIn):
+		if m.pathMode {
+			return m, nil
+		}
+		m.inputFocus = true
+		m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
 		m.input.Focus()
 		return m, textarea.Blink
 
@@ -339,7 +383,11 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.FocusOut):
 		m.inputFocus = false
+		m.pathMode = false
 		m.input.Blur()
+		m.input.Reset()
+		m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
+		m.statusMsg = "cancelled"
 		return m, nil
 
 	case key.Matches(msg, m.keys.Enter):
@@ -347,6 +395,30 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
+
+		if m.pathMode {
+			// Change working directory
+			st, err := os.Stat(text)
+			if err != nil || !st.IsDir() {
+				m.statusMsg = fmt.Sprintf("invalid directory: %s", text)
+				return m, nil
+			}
+			abs, err := filepath.Abs(text)
+			if err != nil {
+				abs = text
+			}
+			m.manager.SetCwd(abs)
+			m.session.LastCwd = abs
+			_ = config.SaveSession(m.session)
+			m.pathMode = false
+			m.inputFocus = false
+			m.input.Blur()
+			m.input.Reset()
+			m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
+			m.statusMsg = fmt.Sprintf("cwd → %s", abs)
+			return m, nil
+		}
+
 		err := m.manager.Send(m.activeID, text)
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("send failed: %v", err)
@@ -368,7 +440,6 @@ func (m *Model) layout() {
 		return
 	}
 
-	// Fixed left sidebar, flexible output pane.
 	leftWidth := 26
 	if m.width < 90 {
 		leftWidth = 22
@@ -377,40 +448,75 @@ func (m *Model) layout() {
 		leftWidth = 18
 	}
 
-	// Header (1) + gap + body + gap + input (3) + status (1) + help (1)
 	chrome := 9
 	contentHeight := m.height - chrome
 	if contentHeight < 6 {
 		contentHeight = 6
 	}
 
-	rightWidth := m.width - leftWidth - 1
-	if rightWidth < 20 {
-		rightWidth = 20
+	avail := m.width - leftWidth - 1
+	if avail < 20 {
+		avail = 20
 	}
 
-	m.viewport.Width = rightWidth
-	m.viewport.Height = contentHeight
+	if m.split {
+		half := avail / 2
+		m.viewport.Width = half
+		m.viewport.Height = contentHeight
+		m.viewport2.Width = avail - half
+		m.viewport2.Height = contentHeight
+	} else {
+		m.viewport.Width = avail
+		m.viewport.Height = contentHeight
+		m.viewport2.Width = 0
+		m.viewport2.Height = contentHeight
+	}
+
 	m.input.SetWidth(m.width - 2)
 	m.input.SetHeight(3)
 
-	// Keep markdown wrapping in sync with the output pane.
-	if m.renderer != nil && rightWidth > 12 {
+	wrap := m.viewport.Width - 4
+	if wrap < 20 {
+		wrap = 20
+	}
+	if m.renderer != nil {
 		r, err := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(rightWidth-4),
+			glamour.WithWordWrap(wrap),
 		)
 		if err == nil {
 			m.renderer = r
 			m.lastContent = ""
+			m.lastContent2 = ""
 		}
 	}
 }
 
 func (m *Model) refreshViewport() {
-	p := m.manager.Get(m.activeID)
+	m.renderAgentInto(&m.viewport, &m.lastContent, m.activeID)
+
+	if m.split {
+		// Secondary pane: previous agent in list, or next if at top.
+		secIdx := m.selected - 1
+		if secIdx < 0 {
+			secIdx = m.selected + 1
+		}
+		if secIdx >= 0 && secIdx < len(m.agents) {
+			m.renderAgentInto(&m.viewport2, &m.lastContent2, m.agents[secIdx].ID)
+		} else {
+			m.viewport2.SetContent("(no second agent)")
+		}
+	}
+}
+
+func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.AgentID) {
+	p := m.manager.Get(id)
 	if p == nil {
-		m.setViewportContent("(no agent selected)")
+		content := "(no agent selected)"
+		if content != *last {
+			*last = content
+			vp.SetContent(content)
+		}
 		return
 	}
 
@@ -422,11 +528,15 @@ func (m *Model) refreshViewport() {
 		} else {
 			msg += "\n\nPress `s` to start."
 		}
-		m.setViewportContent(m.renderMarkdown(msg))
+		content := m.renderMarkdown(msg)
+		if content != *last {
+			*last = content
+			vp.SetContent(content)
+			vp.GotoBottom()
+		}
 		return
 	}
 
-	// Build content: style system/fleet lines differently, keep agent output clean.
 	var b strings.Builder
 	for _, line := range lines {
 		switch {
@@ -438,18 +548,17 @@ func (m *Model) refreshViewport() {
 			b.WriteString(line + "\n")
 		}
 	}
-
 	content := b.String()
-
-	// Try markdown rendering on the whole buffer for code blocks etc.
-	// Fall back to styled plain text if glamour fails or is too slow on huge buffers.
 	if len(lines) < 400 && m.renderer != nil {
 		if rendered, err := m.renderer.Render(content); err == nil {
 			content = rendered
 		}
 	}
-
-	m.setViewportContent(content)
+	if content != *last {
+		*last = content
+		vp.SetContent(content)
+		vp.GotoBottom()
+	}
 }
 
 func (m *Model) setViewportContent(content string) {
@@ -477,12 +586,16 @@ func (m Model) View() string {
 		return "\n  Loading Agent Fleet…"
 	}
 
-	// ── Header ──────────────────────────────────────────────
 	title := titleStyle.Render(" Agent Fleet ")
-	subtitle := subtleStyle.Render("  multi-agent switcher")
-	header := lipgloss.JoinHorizontal(lipgloss.Center, title, subtitle)
+	mode := ""
+	if m.split {
+		mode = subtleStyle.Render("  split")
+	}
+	if m.pathMode {
+		mode = subtleStyle.Render("  set cwd")
+	}
+	header := lipgloss.JoinHorizontal(lipgloss.Center, title, mode)
 
-	// ── Body (sidebar + output) ─────────────────────────────
 	leftWidth := 26
 	if m.width < 90 {
 		leftWidth = 22
@@ -496,16 +609,22 @@ func (m Model) View() string {
 	}
 
 	left := m.renderAgentList()
-	right := m.viewport.View()
-
 	leftPane := leftStyle.Width(leftWidth).Height(m.viewport.Height).Render(left)
-	rightPane := rightStyle.Width(rightWidth).Height(m.viewport.Height).Render(right)
+
+	var rightPane string
+	if m.split {
+		half := rightWidth / 2
+		p1 := rightStyle.Width(half).Height(m.viewport.Height).Render(m.viewport.View())
+		p2 := rightStyle.Width(rightWidth - half).Height(m.viewport.Height).Render(m.viewport2.View())
+		rightPane = lipgloss.JoinHorizontal(lipgloss.Top, p1, p2)
+	} else {
+		rightPane = rightStyle.Width(rightWidth).Height(m.viewport.Height).Render(m.viewport.View())
+	}
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	// ── Input ───────────────────────────────────────────────
 	inputBorderColor := lipgloss.Color("#374151")
-	if m.inputFocus {
+	if m.inputFocus || m.pathMode {
 		inputBorderColor = lipgloss.Color("#7C3AED")
 	}
 	inputBox := lipgloss.NewStyle().
@@ -515,7 +634,6 @@ func (m Model) View() string {
 		Width(m.width - 2).
 		Render(m.input.View())
 
-	// ── Status bar ──────────────────────────────────────────
 	cwd := m.manager.Cwd()
 	if len(cwd) > 40 {
 		cwd = "…" + cwd[len(cwd)-37:]
@@ -534,12 +652,11 @@ func (m Model) View() string {
 		statusLeft + strings.Repeat(" ", gap) + statusRight,
 	)
 
-	// ── Help ────────────────────────────────────────────────
 	var helpView string
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  i input  ·  c copy  ·  ctrl+l clear  ·  q quit")
+		helpView = subtleStyle.Render(" ? help  ·  s start  ·  x stop  ·  r restart  ·  d cwd  ·  v split  ·  i input  ·  c copy  ·  q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -593,6 +710,11 @@ func (m Model) renderAgentList() string {
 		st := string(a.Status)
 		if a.Status == process.StatusMissing {
 			st = "not found"
+			if a.CmdPath != "" {
+				st = "missing: " + a.ShortPath()
+			}
+		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
+			st = a.ShortPath()
 		}
 		sec := subtleStyle.Render(fmt.Sprintf("    %s", st))
 		b.WriteString(sec + "\n")

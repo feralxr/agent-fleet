@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -162,7 +163,11 @@ func (m *Manager) Start(id config.AgentID) error {
 	p.cancel = make(chan struct{})
 	p.done = make(chan struct{})
 	p.lastErr = ""
-	p.append(fmt.Sprintf("[fleet] started %s (pid %d) in %s", p.Name, cmd.Process.Pid, m.cwd))
+	cmdLine := cfg.Command
+	if len(cfg.Args) > 0 {
+		cmdLine += " " + strings.Join(cfg.Args, " ")
+	}
+	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d) in %s", p.Name, cmdLine, cmd.Process.Pid, m.cwd))
 
 	go m.stream(p, stdout, "out")
 	go m.stream(p, stderr, "err")
