@@ -20,6 +20,7 @@ type Status string
 const (
 	StatusIdle      Status = "idle"
 	StatusRunning   Status = "running"
+	StatusWaiting   Status = "waiting" // running but likely needs user input
 	StatusError     Status = "error"
 	StatusStopped   Status = "stopped"
 	StatusMissing   Status = "missing" // binary not found on PATH
@@ -279,6 +280,9 @@ func (m *Manager) Send(id config.AgentID, text string) error {
 	if len(p.Output) > maxOutputLines {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
 	}
+	if p.Status == StatusWaiting {
+		p.Status = StatusRunning
+	}
 	return nil
 }
 
@@ -293,6 +297,29 @@ func (m *Manager) ClearOutput(id config.AgentID) {
 	p.mu.Lock()
 	p.Output = p.Output[:0]
 	p.mu.Unlock()
+}
+
+// NextNeedingAttention returns the index in List() order of the next agent
+// that needs attention after afterID (wrapping). Returns -1 if none.
+func (m *Manager) NextNeedingAttention(afterID config.AgentID) config.AgentID {
+	list := m.List()
+	if len(list) == 0 {
+		return ""
+	}
+	start := 0
+	for i, a := range list {
+		if a.ID == afterID {
+			start = i + 1
+			break
+		}
+	}
+	for i := 0; i < len(list); i++ {
+		idx := (start + i) % len(list)
+		if list[idx].NeedsAttention() {
+			return list[idx].ID
+		}
+	}
+	return ""
 }
 
 // SetWorktree assigns an isolated worktree path to an agent (empty clears it).
@@ -439,6 +466,72 @@ func (p *AgentProcess) append(line string) {
 	p.Output = append(p.Output, line)
 	if len(p.Output) > maxOutputLines {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
+	}
+	// Soft heuristic: if the process is running and the latest lines look like a prompt, mark waiting.
+	if p.Status == StatusRunning || p.Status == StatusWaiting {
+		if looksLikePrompt(line) {
+			p.Status = StatusWaiting
+		} else if p.Status == StatusWaiting && !looksLikePrompt(line) {
+			// New non-prompt output → back to running
+			p.Status = StatusRunning
+		}
+	}
+}
+
+// looksLikePrompt detects common "agent is waiting for you" patterns.
+func looksLikePrompt(line string) bool {
+	s := strings.TrimSpace(strings.ToLower(line))
+	if s == "" {
+		return false
+	}
+	patterns := []string{
+		"y/n",
+		"(y/n)",
+		"[y/n]",
+		"yes/no",
+		"allow?",
+		"approve",
+		"permission",
+		"press enter",
+		"continue?",
+		"confirm",
+		"waiting for",
+		"your input",
+		"type a message",
+		"> ",
+		"❯ ",
+		"? ",
+		"do you want",
+		"shall i",
+		"may i",
+		"ok to",
+		"proceed?",
+	}
+	for _, ptn := range patterns {
+		if strings.Contains(s, ptn) {
+			return true
+		}
+	}
+	// Ends with ? and short → likely a question
+	if strings.HasSuffix(s, "?") && len(s) < 120 {
+		return true
+	}
+	return false
+}
+
+// NeedsAttention reports whether the agent is blocked on the user.
+func (p *AgentProcess) NeedsAttention() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Status == StatusWaiting || p.Status == StatusError
+}
+
+// MarkRunning forces status back to running (e.g. after user sent input).
+func (p *AgentProcess) MarkRunning() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Status == StatusWaiting {
+		p.Status = StatusRunning
 	}
 }
 

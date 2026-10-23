@@ -9,6 +9,7 @@ Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
 - Launch / stop / restart any agent
 - **Git worktrees per agent** — isolated checkouts so agents don't clash
 - **Fan-out** — send one prompt to every running agent
+- **Attention jump** — space hops to agents waiting for input
 - Split view (watch two agents at once)
 - Change working directory from the TUI
 - Shared prompt input + live markdown output
@@ -46,6 +47,7 @@ fleet
 | `s`        | Start selected agent                        |
 | `x`        | Stop selected agent                         |
 | `r`        | Restart selected agent                      |
+| `space`    | Jump to next agent that needs attention     |
 | `w`        | Create / attach git worktree for agent      |
 | `f`        | Fan-out mode (next prompt → all running)    |
 | `d`        | Change working directory                    |
@@ -69,6 +71,10 @@ Press `w` on an agent while inside a git repo. Fleet creates:
 on branch `fleet/<agent-id>`. That agent then runs with its cwd set to the worktree so parallel edits don't collide.
 
 Add `.fleet/` to your repo's `.gitignore` if you want to keep worktrees local-only.
+
+### Attention
+
+Agents show `◐` (cyan) when recent output looks like a question or approval prompt (`y/n`, "allow?", etc.). Press **space** to jump to the next agent that needs you. Sending a prompt clears the waiting state.
 
 ### Fan-out
 

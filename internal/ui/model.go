@@ -41,6 +41,7 @@ type keyMap struct {
 	Split    key.Binding
 	Worktree key.Binding
 	Fan      key.Binding
+	Jump     key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -109,17 +110,21 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("f"),
 			key.WithHelp("f", "fan prompt to all"),
 		),
+		Jump: key.NewBinding(
+			key.WithKeys(" "),
+			key.WithHelp("space", "jump to needs attention"),
+		),
 	}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Worktree, k.Fan, k.Cwd, k.Split, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Jump, k.Worktree, k.Fan, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
-		{k.Worktree, k.Fan, k.Cwd, k.Split},
+		{k.Jump, k.Worktree, k.Fan, k.Cwd, k.Split},
 		{k.FocusIn, k.FocusOut, k.Enter, k.Clear, k.Copy},
 		{k.Help, k.Quit},
 	}
@@ -366,14 +371,29 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.ensureWorktree()
 
 	case key.Matches(msg, m.keys.Fan):
-		// Fan mode: next Enter sends to all running agents
 		m.inputFocus = true
 		m.input.Placeholder = "Fan-out: type prompt, Enter sends to ALL running agents…"
 		m.input.Focus()
 		m.statusMsg = "fan-out mode — prompt will go to every running agent"
-		// reuse pathMode flag? better a fanMode
 		m.fanMode = true
 		return m, textarea.Blink
+
+	case key.Matches(msg, m.keys.Jump):
+		next := m.manager.NextNeedingAttention(m.activeID)
+		if next == "" {
+			m.statusMsg = "no agent needs attention"
+			return m, nil
+		}
+		for i, a := range m.agents {
+			if a.ID == next {
+				m.selected = i
+				m.activeID = next
+				break
+			}
+		}
+		m.statusMsg = fmt.Sprintf("jumped to %s", m.agents[m.selected].Name)
+		m.refreshViewport()
+		return m, nil
 
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode {
@@ -747,7 +767,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · s start · w worktree · f fan · d cwd · v split · i input · c copy · q quit")
+		helpView = subtleStyle.Render(" ? help · space jump · s start · w worktree · f fan · v split · i input · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -772,6 +792,8 @@ func (m Model) renderAgentList() string {
 		switch a.Status {
 		case process.StatusRunning:
 			statusDot = statusRun.Render("●")
+		case process.StatusWaiting:
+			statusDot = statusWait.Render("◐")
 		case process.StatusError:
 			statusDot = statusErr.Render("●")
 		case process.StatusMissing:
@@ -803,6 +825,11 @@ func (m Model) renderAgentList() string {
 			st = "not found"
 			if a.CmdPath != "" {
 				st = "missing: " + a.ShortPath()
+			}
+		} else if a.Status == process.StatusWaiting {
+			st = "needs you"
+			if a.WorktreePath != "" {
+				st = "needs you · wt:" + gitutil.ShortName(a.WorktreePath)
 			}
 		} else if a.WorktreePath != "" {
 			st = "wt:" + gitutil.ShortName(a.WorktreePath)
@@ -850,6 +877,7 @@ var (
 
 	statusIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B"))
 	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
+	statusWait = lipgloss.NewStyle().Foreground(lipgloss.Color("#38BDF8"))
 	statusErr  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
 	statusMiss = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
 
