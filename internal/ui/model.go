@@ -44,6 +44,10 @@ type keyMap struct {
 	Jump     key.Binding
 	Diff     key.Binding
 	Reload   key.Binding
+	SaveName key.Binding
+	LoadName key.Binding
+	HistUp   key.Binding
+	HistDown key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -124,6 +128,22 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("ctrl+r"),
 			key.WithHelp("ctrl+r", "reload fleet.toml"),
 		),
+		SaveName: key.NewBinding(
+			key.WithKeys("S"),
+			key.WithHelp("S", "save named session"),
+		),
+		LoadName: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "load named session"),
+		),
+		HistUp: key.NewBinding(
+			key.WithKeys("up"),
+			key.WithHelp("↑", "prev prompt (input)"),
+		),
+		HistDown: key.NewBinding(
+			key.WithKeys("down"),
+			key.WithHelp("↓", "next prompt (input)"),
+		),
 	}
 }
 
@@ -161,6 +181,8 @@ type Model struct {
 	fanMode      bool // next prompt fans to all running agents
 	showDiff     bool // show git diff --stat instead of agent output
 	split        bool // side-by-side output of two agents
+	nameMode     bool // saving a named session
+	histIdx      int  // -1 = not browsing history
 	statusMsg    string
 	lastTick     time.Time
 	ready        bool
@@ -234,6 +256,8 @@ func NewModel() Model {
 		fanMode:    false,
 		showDiff:   false,
 		split:      false,
+		nameMode:   false,
+		histIdx:    -1,
 		statusMsg:  "Ready",
 	}
 	return m
@@ -426,10 +450,8 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Reload):
-		// Refresh session worktrees into memory then reload configs
 		added := m.manager.ReloadConfigs(&m.session)
 		m.agents = m.manager.List()
-		// Keep selection valid
 		if m.selected >= len(m.agents) {
 			m.selected = 0
 		}
@@ -441,6 +463,18 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("reloaded fleet.toml (%d agents, +%d new)", len(m.agents), added)
 		m.refreshViewport()
 		return m, nil
+
+	case key.Matches(msg, m.keys.SaveName):
+		m.nameMode = true
+		m.inputFocus = true
+		m.input.SetValue("")
+		m.input.Placeholder = "Name this session and press Enter…"
+		m.input.Focus()
+		m.statusMsg = "save named session"
+		return m, textarea.Blink
+
+	case key.Matches(msg, m.keys.LoadName):
+		return m.loadNamedSessionCycle()
 
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode {
@@ -485,15 +519,62 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputFocus = false
 		m.pathMode = false
 		m.fanMode = false
+		m.nameMode = false
+		m.histIdx = -1
 		m.input.Blur()
 		m.input.Reset()
 		m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
 		m.statusMsg = "cancelled"
 		return m, nil
 
+	case key.Matches(msg, m.keys.HistUp):
+		if m.pathMode || m.nameMode {
+			break
+		}
+		hist := m.session.PromptHist
+		if len(hist) == 0 {
+			return m, nil
+		}
+		if m.histIdx < 0 {
+			m.histIdx = len(hist) - 1
+		} else if m.histIdx > 0 {
+			m.histIdx--
+		}
+		m.input.SetValue(hist[m.histIdx])
+		m.input.CursorEnd()
+		return m, nil
+
+	case key.Matches(msg, m.keys.HistDown):
+		if m.pathMode || m.nameMode {
+			break
+		}
+		hist := m.session.PromptHist
+		if m.histIdx < 0 {
+			return m, nil
+		}
+		if m.histIdx >= len(hist)-1 {
+			m.histIdx = -1
+			m.input.SetValue("")
+			return m, nil
+		}
+		m.histIdx++
+		m.input.SetValue(hist[m.histIdx])
+		m.input.CursorEnd()
+		return m, nil
+
 	case key.Matches(msg, m.keys.Enter):
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			return m, nil
+		}
+
+		if m.nameMode {
+			m.saveNamedSession(text)
+			m.nameMode = false
+			m.inputFocus = false
+			m.input.Blur()
+			m.input.Reset()
+			m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
 			return m, nil
 		}
 
@@ -521,10 +602,11 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.fanMode {
+			m.pushPrompt(text)
 			n := 0
 			var lastErr error
 			for _, a := range m.agents {
-				if a.Status == process.StatusRunning {
+				if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
 					if err := m.manager.Send(a.ID, text); err != nil {
 						lastErr = err
 					} else {
@@ -533,6 +615,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.fanMode = false
+			m.histIdx = -1
 			m.inputFocus = false
 			m.input.Blur()
 			m.input.Reset()
@@ -548,12 +631,14 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m.pushPrompt(text)
 		err := m.manager.Send(m.activeID, text)
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("send failed: %v", err)
 		} else {
 			m.statusMsg = "prompt sent"
 			m.input.Reset()
+			m.histIdx = -1
 		}
 		m.refreshViewport()
 		return m, nil
@@ -562,6 +647,101 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) pushPrompt(text string) {
+	const maxHist = 50
+	// Dedupe consecutive
+	if len(m.session.PromptHist) > 0 && m.session.PromptHist[len(m.session.PromptHist)-1] == text {
+		return
+	}
+	m.session.PromptHist = append(m.session.PromptHist, text)
+	if len(m.session.PromptHist) > maxHist {
+		m.session.PromptHist = m.session.PromptHist[len(m.session.PromptHist)-maxHist:]
+	}
+	_ = config.SaveSession(m.session)
+}
+
+func (m *Model) saveNamedSession(name string) {
+	if m.session.Named == nil {
+		m.session.Named = map[string]config.NamedSession{}
+	}
+	wts := map[string]string{}
+	for _, a := range m.agents {
+		if wt := m.manager.Worktree(a.ID); wt != "" {
+			wts[string(a.ID)] = wt
+		}
+	}
+	m.session.Named[name] = config.NamedSession{
+		Cwd:        m.manager.Cwd(),
+		ActiveID:   m.activeID,
+		Worktrees:  wts,
+		PromptHist: append([]string{}, m.session.PromptHist...),
+	}
+	_ = config.SaveSession(m.session)
+	m.statusMsg = fmt.Sprintf("saved session %q", name)
+}
+
+func (m Model) loadNamedSessionCycle() (tea.Model, tea.Cmd) {
+	if m.session.Named == nil || len(m.session.Named) == 0 {
+		m.statusMsg = "no named sessions — press S to save one"
+		return m, nil
+	}
+	// Deterministic order
+	names := make([]string, 0, len(m.session.Named))
+	for n := range m.session.Named {
+		names = append(names, n)
+	}
+	// sort
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			if names[j] < names[i] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+	// Pick next after current status hint or first
+	pick := names[0]
+	if strings.HasPrefix(m.statusMsg, "loaded session ") {
+		cur := strings.TrimPrefix(m.statusMsg, "loaded session ")
+		cur = strings.Trim(cur, `"`)
+		for i, n := range names {
+			if n == cur && i+1 < len(names) {
+				pick = names[i+1]
+				break
+			}
+		}
+	}
+	ns := m.session.Named[pick]
+	if ns.Cwd != "" {
+		if st, err := os.Stat(ns.Cwd); err == nil && st.IsDir() {
+			m.manager.SetCwd(ns.Cwd)
+			m.session.LastCwd = ns.Cwd
+		}
+	}
+	if ns.Worktrees != nil {
+		m.session.Worktrees = ns.Worktrees
+		for id, wt := range ns.Worktrees {
+			m.manager.SetWorktree(config.AgentID(id), wt)
+		}
+	}
+	if len(ns.PromptHist) > 0 {
+		m.session.PromptHist = append([]string{}, ns.PromptHist...)
+	}
+	if ns.ActiveID != "" {
+		for i, a := range m.agents {
+			if a.ID == ns.ActiveID {
+				m.selected = i
+				m.activeID = a.ID
+				break
+			}
+		}
+	}
+	m.session.LastAgentID = m.activeID
+	_ = config.SaveSession(m.session)
+	m.statusMsg = fmt.Sprintf("loaded session %q", pick)
+	m.refreshViewport()
+	return m, nil
 }
 
 func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
@@ -841,7 +1021,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · space jump · g diff · ctrl+r reload · s start · w worktree · f fan · q quit")
+		helpView = subtleStyle.Render(" ? help · space · g diff · S/L sessions · ↑↓ history · s start · w worktree · f fan · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,

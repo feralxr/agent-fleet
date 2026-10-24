@@ -32,6 +32,16 @@ cd agent-fleet
 make build    # or: go build -o fleet ./cmd/fleet
 ```
 
+## Demo
+
+See [docs/demo.md](docs/demo.md) for a walkthrough of the main layout and flow.
+
+```text
+AGENTS            live output / diff
+● running         › your prompt
+◐ needs you       agent response…
+```
+
 ## Quick start
 
 ```bash
@@ -63,6 +73,9 @@ q          quit (saves session)
 | `f` | Fan-out prompt to all running agents |
 | `g` | Toggle git diff --stat |
 | `ctrl+r` | Reload fleet.toml |
+| `S` | Save named session |
+| `L` | Load next named session |
+| `↑`/`↓` (input) | Prompt history |
 | `d` | Change working directory |
 | `v` | Toggle split view |
 | `i` | Focus prompt input |
