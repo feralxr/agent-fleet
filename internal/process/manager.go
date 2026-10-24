@@ -102,6 +102,56 @@ func (m *Manager) Get(id config.AgentID) *AgentProcess {
 	return m.agents[id]
 }
 
+// ReloadConfigs reloads agent definitions from fleet.toml + session.
+// Running agents keep their process; metadata (name, pty flag, availability) updates.
+// New agent IDs appear; removed IDs stay until restart if still running.
+func (m *Manager) ReloadConfigs(session *config.Session) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfgs := config.DefaultAgentsWithSession(session)
+	m.configs = cfgs
+	added := 0
+	for _, a := range cfgs {
+		if existing, ok := m.agents[a.ID]; ok {
+			existing.Name = a.Name
+			existing.UsePTY = a.UsePTY
+			existing.probeWith(a)
+			continue
+		}
+		p := &AgentProcess{
+			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
+			Output: make([]string, 0, 128),
+		}
+		p.probeWith(a)
+		m.agents[a.ID] = p
+		added++
+	}
+	return added
+}
+
+// AttentionCount returns how many agents need attention.
+func (m *Manager) AttentionCount() int {
+	n := 0
+	for _, p := range m.List() {
+		if p.NeedsAttention() {
+			n++
+		}
+	}
+	return n
+}
+
+// RunningCount returns how many agents are running or waiting.
+func (m *Manager) RunningCount() int {
+	n := 0
+	for _, p := range m.List() {
+		st := p.Status
+		if st == StatusRunning || st == StatusWaiting {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *Manager) Start(id config.AgentID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

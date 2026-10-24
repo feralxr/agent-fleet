@@ -43,6 +43,7 @@ type keyMap struct {
 	Fan      key.Binding
 	Jump     key.Binding
 	Diff     key.Binding
+	Reload   key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -118,6 +119,10 @@ func defaultKeyMap() keyMap {
 		Diff: key.NewBinding(
 			key.WithKeys("g"),
 			key.WithHelp("g", "toggle git diff"),
+		),
+		Reload: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "reload fleet.toml"),
 		),
 	}
 }
@@ -417,6 +422,23 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "diff view off"
 		}
+		m.refreshViewport()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Reload):
+		// Refresh session worktrees into memory then reload configs
+		added := m.manager.ReloadConfigs(&m.session)
+		m.agents = m.manager.List()
+		// Keep selection valid
+		if m.selected >= len(m.agents) {
+			m.selected = 0
+		}
+		if len(m.agents) > 0 {
+			m.activeID = m.agents[m.selected].ID
+		}
+		m.lastContent = ""
+		m.lastContent2 = ""
+		m.statusMsg = fmt.Sprintf("reloaded fleet.toml (%d agents, +%d new)", len(m.agents), added)
 		m.refreshViewport()
 		return m, nil
 
@@ -799,8 +821,14 @@ func (m Model) View() string {
 	if p := m.manager.Get(m.activeID); p != nil {
 		activeName = p.Name
 	}
+	attn := m.manager.AttentionCount()
+	runn := m.manager.RunningCount()
+	badge := fmt.Sprintf("%d run", runn)
+	if attn > 0 {
+		badge += fmt.Sprintf(" · %d need you", attn)
+	}
 	statusLeft := fmt.Sprintf(" %s", m.statusMsg)
-	statusRight := fmt.Sprintf("%s  ·  %s  ·  %s ", activeName, cwd, time.Now().Format("15:04:05"))
+	statusRight := fmt.Sprintf("%s  ·  %s  ·  %s  ·  %s ", badge, activeName, cwd, time.Now().Format("15:04:05"))
 	gap := m.width - lipgloss.Width(statusLeft) - lipgloss.Width(statusRight)
 	if gap < 1 {
 		gap = 1
@@ -813,7 +841,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · space jump · g diff · s start · w worktree · f fan · v split · q quit")
+		helpView = subtleStyle.Render(" ? help · space jump · g diff · ctrl+r reload · s start · w worktree · f fan · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -884,6 +912,9 @@ func (m Model) renderAgentList() string {
 			}
 		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
 			st = a.ShortPath()
+			if a.UsePTY {
+				st += " · pty"
+			}
 		}
 		// Append one-line diff summary when dirty
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {

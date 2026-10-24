@@ -62,6 +62,7 @@ q          quit (saves session)
 | `w` | Create / attach git worktree |
 | `f` | Fan-out prompt to all running agents |
 | `g` | Toggle git diff --stat |
+| `ctrl+r` | Reload fleet.toml |
 | `d` | Change working directory |
 | `v` | Toggle split view |
 | `i` | Focus prompt input |
