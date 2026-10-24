@@ -32,6 +32,7 @@ type keyMap struct {
 	Help     key.Binding
 	Start    key.Binding
 	Stop     key.Binding
+	StopAll  key.Binding
 	Restart  key.Binding
 	Clear    key.Binding
 	FocusIn  key.Binding
@@ -79,6 +80,10 @@ func defaultKeyMap() keyMap {
 		Stop: key.NewBinding(
 			key.WithKeys("x"),
 			key.WithHelp("x", "stop agent"),
+		),
+		StopAll: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "stop all agents"),
 		),
 		Restart: key.NewBinding(
 			key.WithKeys("r"),
@@ -153,10 +158,10 @@ func (k keyMap) ShortHelp() []key.Binding {
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
+		{k.Up, k.Down, k.Start, k.Stop, k.StopAll, k.Restart},
 		{k.Jump, k.Diff, k.Worktree, k.Fan, k.Cwd, k.Split},
-		{k.FocusIn, k.FocusOut, k.Enter, k.Clear, k.Copy},
-		{k.Help, k.Quit},
+		{k.SaveName, k.LoadName, k.Reload, k.Copy, k.Clear},
+		{k.FocusIn, k.FocusOut, k.Enter, k.Help, k.Quit},
 	}
 }
 
@@ -878,22 +883,51 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 
 	lines := p.SnapshotOutput()
 	if len(lines) == 0 {
-		msg := fmt.Sprintf("%s is **%s**", p.Name, p.Status)
-		if p.Status == process.StatusMissing {
-			msg += fmt.Sprintf("\n\nBinary not found: `%s`\n\nInstall it or set `FLEET_%s_CMD`", p.CmdPath, strings.ToUpper(string(p.ID)))
-		} else {
-			msg += "\n\nPress `s` to start."
+		dir := m.manager.EffectiveCwd(id)
+		mode := "pipes"
+		if p.UsePTY {
+			mode = "pty"
+		}
+		msg := fmt.Sprintf("# %s\n\n**Status:** `%s`  ·  **Mode:** `%s`\n\n**Path:** `%s`\n",
+			p.Name, p.Status, mode, dir)
+		switch p.Status {
+		case process.StatusMissing:
+			msg += fmt.Sprintf("\nBinary **not found** on `$PATH`: `%s`\n\n"+
+				"Fix options:\n"+
+				"1. Install the CLI and ensure it is on `$PATH`\n"+
+				"2. Set env `FLEET_%s_CMD` to the full binary path\n"+
+				"3. Add a custom entry in `fleet.toml` and press `ctrl+r`\n",
+				p.CmdPath, strings.ToUpper(strings.ReplaceAll(string(p.ID), "-", "_")))
+		case process.StatusError:
+			err := p.LastError()
+			if err == "" {
+				err = "unknown error"
+			}
+			msg += fmt.Sprintf("\nLast error: `%s`\n\nPress **r** to restart or **s** to start again.\n", err)
+		case process.StatusStopped:
+			msg += "\nAgent stopped. Press **s** to start again, or **r** to restart.\n"
+		default:
+			msg += "\nPress **s** to start this agent.\n\n" +
+				"| Key | Action |\n|-----|--------|\n" +
+				"| `s` | Start |\n| `w` | Create git worktree |\n| `i` | Focus prompt |\n| `g` | Diff view |\n| `?` | Full help |\n"
 		}
 		content := m.renderMarkdown(msg)
 		if content != *last {
 			*last = content
 			vp.SetContent(content)
-			vp.GotoBottom()
+			vp.GotoTop()
 		}
 		return
 	}
 
+	// Stick-to-bottom: only auto-scroll when user was already at bottom
+	atBottom := vp.AtBottom()
+
 	var b strings.Builder
+	// Lightweight session header
+	if u := process.FormatUptime(p.Uptime()); u != "" {
+		b.WriteString(subtleStyle.Render(fmt.Sprintf("── %s · up %s · %d lines ──", p.Name, u, len(lines))) + "\n")
+	}
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "[fleet]"):
@@ -905,7 +939,8 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 		}
 	}
 	content := b.String()
-	if len(lines) < 400 && m.renderer != nil {
+	// Markdown only for modest buffers (keeps streaming fast)
+	if len(lines) < 300 && m.renderer != nil {
 		if rendered, err := m.renderer.Render(content); err == nil {
 			content = rendered
 		}
@@ -913,7 +948,9 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 	if content != *last {
 		*last = content
 		vp.SetContent(content)
-		vp.GotoBottom()
+		if atBottom {
+			vp.GotoBottom()
+		}
 	}
 }
 
@@ -943,17 +980,32 @@ func (m Model) View() string {
 	}
 
 	title := titleStyle.Render(" Agent Fleet ")
-	mode := ""
+	var badges []string
 	if m.split {
-		mode = subtleStyle.Render("  split")
+		badges = append(badges, "split")
 	}
 	if m.pathMode {
-		mode = subtleStyle.Render("  set cwd")
+		badges = append(badges, "cwd")
 	}
 	if m.showDiff {
-		mode = subtleStyle.Render("  diff")
+		badges = append(badges, "diff")
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Center, title, mode)
+	if m.fanMode {
+		badges = append(badges, "fan")
+	}
+	if m.nameMode {
+		badges = append(badges, "save")
+	}
+	mode := ""
+	if len(badges) > 0 {
+		mode = subtleStyle.Render("  " + strings.Join(badges, " · "))
+	}
+	// Active agent chip
+	chip := ""
+	if p := m.manager.Get(m.activeID); p != nil {
+		chip = subtleStyle.Render(fmt.Sprintf("  %s [%s]", p.Name, p.Status))
+	}
+	header := lipgloss.JoinHorizontal(lipgloss.Center, title, mode, chip)
 
 	leftWidth := 26
 	if m.width < 90 {
@@ -1087,8 +1139,16 @@ func (m Model) renderAgentList() string {
 			}
 		} else if a.WorktreePath != "" {
 			st = "wt:" + gitutil.ShortName(a.WorktreePath)
-			if a.Status == process.StatusRunning {
-				st += " · run"
+			if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
+				if u := process.FormatUptime(a.Uptime()); u != "" {
+					st += " · " + u
+				}
+			}
+		} else if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
+			if u := process.FormatUptime(a.Uptime()); u != "" {
+				st = u
+			} else {
+				st = string(a.Status)
 			}
 		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
 			st = a.ShortPath()

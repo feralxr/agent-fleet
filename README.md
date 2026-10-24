@@ -67,6 +67,7 @@ q          quit (saves session)
 | `↓` / `j` | Next agent |
 | `s` | Start |
 | `x` | Stop |
+| `X` | Stop all agents |
 | `r` | Restart |
 | `space` | Jump to next agent needing attention |
 | `w` | Create / attach git worktree |
@@ -170,6 +171,15 @@ CI runs tests on every push; tagged releases (`v*`) publish linux/darwin/windows
 ```bash
 fleet --version
 ```
+
+### Quality details
+
+- **Stick-to-bottom scroll** — new output only auto-scrolls if you were already at the bottom (scroll up to read history without fighting the stream)
+- **Rich empty states** — missing binary, error, and idle screens explain exactly how to fix/start
+- **Uptime** — running agents show live uptime in the sidebar and output header
+- **Copy** — clipboard includes agent name, status, and path header
+- **Mode badges** — header shows split / diff / fan / cwd / save when active
+- **Stop all** — `X` stops every running agent
 
 ## Requirements
 

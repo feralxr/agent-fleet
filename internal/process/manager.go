@@ -48,8 +48,9 @@ type AgentProcess struct {
 
 	Output  []string
 	mu      sync.Mutex
-	started time.Time
-	lastErr string
+	started    time.Time
+	lastActive time.Time
+	lastErr    string
 }
 
 type Manager struct {
@@ -201,6 +202,7 @@ func (m *Manager) Start(id config.AgentID) error {
 		p.stdin = nil
 		p.Status = StatusRunning
 		p.started = time.Now()
+		p.lastActive = p.started
 		p.cancel = make(chan struct{})
 		p.done = make(chan struct{})
 		p.lastErr = ""
@@ -236,6 +238,7 @@ func (m *Manager) Start(id config.AgentID) error {
 	p.ptmx = nil
 	p.Status = StatusRunning
 	p.started = time.Now()
+	p.lastActive = p.started
 	p.cancel = make(chan struct{})
 	p.done = make(chan struct{})
 	p.lastErr = ""
@@ -528,6 +531,7 @@ func (p *AgentProcess) append(line string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.Output = append(p.Output, line)
+	p.lastActive = time.Now()
 	if len(p.Output) > maxOutputLines {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
 	}
@@ -539,6 +543,55 @@ func (p *AgentProcess) append(line string) {
 		}
 	}
 }
+
+// Uptime returns how long the process has been running, or 0 if not.
+func (p *AgentProcess) Uptime() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Status != StatusRunning && p.Status != StatusWaiting {
+		return 0
+	}
+	if p.started.IsZero() {
+		return 0
+	}
+	return time.Since(p.started)
+}
+
+// LastActive returns when output was last received.
+func (p *AgentProcess) LastActive() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastActive
+}
+
+// FormatUptime is a human short uptime like 3m12s.
+func FormatUptime(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	if s < 3600 {
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	}
+	return fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
+}
+
+// StopAll stops every running agent.
+func (m *Manager) StopAll() int {
+	n := 0
+	for _, p := range m.List() {
+		if p.Status == StatusRunning || p.Status == StatusWaiting {
+			if err := m.Stop(p.ID); err == nil {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 
 func looksLikePrompt(line string) bool {
 	s := strings.TrimSpace(strings.ToLower(line))

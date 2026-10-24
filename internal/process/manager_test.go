@@ -2,6 +2,7 @@ package process
 
 import (
 	"testing"
+	"time"
 
 	"github.com/feralxr/agent-fleet/internal/config"
 )
@@ -44,5 +45,17 @@ func TestSendNotRunning(t *testing.T) {
 	err := m.Send(config.AgentClaude, "hi")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestFormatUptime(t *testing.T) {
+	if FormatUptime(0) != "" {
+		t.Fatal("zero")
+	}
+	if FormatUptime(5*time.Second) != "5s" {
+		t.Fatal(FormatUptime(5 * time.Second))
+	}
+	if FormatUptime(65*time.Second) != "1m05s" {
+		t.Fatal(FormatUptime(65 * time.Second))
 	}
 }
