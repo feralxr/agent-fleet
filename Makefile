@@ -24,8 +24,11 @@ example:
 	fi
 
 release:
-	GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-linux-amd64 ./cmd/fleet
-	GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-linux-arm64 ./cmd/fleet
-	GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-darwin-amd64 ./cmd/fleet
-	GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-darwin-arm64 ./cmd/fleet
-	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-windows-amd64.exe ./cmd/fleet
+	mkdir -p dist
+	GOOS=linux   GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-linux-x64 ./cmd/fleet
+	GOOS=linux   GOARCH=arm64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-linux-arm64 ./cmd/fleet
+	GOOS=darwin  GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-darwin-x64 ./cmd/fleet
+	GOOS=darwin  GOARCH=arm64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-darwin-arm64 ./cmd/fleet
+	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-windows-x64.exe ./cmd/fleet
+	GOOS=windows GOARCH=386   go build -ldflags "-s -w -X main.version=$(VERSION)" -o dist/fleet-windows-x86.exe ./cmd/fleet
+	cd dist && sha256sum * > checksums.txt

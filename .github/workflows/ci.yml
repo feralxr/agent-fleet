@@ -34,13 +34,21 @@ jobs:
         run: |
           mkdir -p dist
           VERSION=${GITHUB_REF_NAME}
-          for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            OS=${pair%/*}; ARCH=${pair#*/}
-            EXT=""; [ "$OS" = "windows" ] && EXT=".exe"
-            GOOS=$OS GOARCH=$ARCH go build -ldflags "-s -w -X main.version=$VERSION" \
-              -o "dist/fleet-${OS}-${ARCH}${EXT}" ./cmd/fleet
-          done
-          cd dist && sha256sum * > checksums.txt
+          # OS/ARCH pairs → friendly asset names
+          # windows: amd64 = x64, 386 = x86 (32-bit)
+          build() {
+            local goos=$1 goarch=$2 name=$3
+            local out="dist/${name}"
+            echo "→ $out"
+            GOOS=$goos GOARCH=$goarch go build -ldflags "-s -w -X main.version=$VERSION" -o "$out" ./cmd/fleet
+          }
+          build linux   amd64 fleet-linux-x64
+          build linux   arm64 fleet-linux-arm64
+          build darwin  amd64 fleet-darwin-x64
+          build darwin  arm64 fleet-darwin-arm64
+          build windows amd64 fleet-windows-x64.exe
+          build windows 386   fleet-windows-x86.exe
+          cd dist && sha256sum * > checksums.txt && ls -la
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
