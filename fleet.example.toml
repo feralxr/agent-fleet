@@ -1,0 +1,29 @@
+# Agent Fleet — example configuration
+# Copy to ./fleet.toml or ~/.config/agent-fleet/fleet.toml
+# Or: export FLEET_CONFIG=/path/to/fleet.toml
+
+# Global default for PTY (true recommended for interactive agents)
+use_pty = true
+
+# Keep built-in Claude / Cursor / OpenCode / Grok and ADD more agents:
+[[extra_agents]]
+id = "aider"
+name = "Aider"
+command = "aider"
+args = ["--no-git"]
+description = "Aider pair programming"
+use_pty = true
+
+[[extra_agents]]
+id = "codex"
+name = "Codex"
+command = "codex"
+description = "OpenAI Codex CLI"
+use_pty = true
+
+# To REPLACE built-ins entirely, use [[agents]] instead of [[extra_agents]]:
+# [[agents]]
+# id = "claude"
+# name = "Claude Code"
+# command = "claude"
+# use_pty = true

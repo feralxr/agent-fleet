@@ -1,0 +1,122 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestBuiltinAgents(t *testing.T) {
+	agents := BuiltinAgents()
+	if len(agents) != 4 {
+		t.Fatalf("expected 4 builtins, got %d", len(agents))
+	}
+	ids := map[AgentID]bool{}
+	for _, a := range agents {
+		if a.Command == "" {
+			t.Errorf("agent %s has empty command", a.ID)
+		}
+		ids[a.ID] = true
+	}
+	for _, id := range []AgentID{AgentClaude, AgentCursor, AgentOpenCode, AgentGrok} {
+		if !ids[id] {
+			t.Errorf("missing builtin %s", id)
+		}
+	}
+}
+
+func TestResolveAgentsExtra(t *testing.T) {
+	file := &FleetFile{
+		Extra: []AgentConfig{
+			{ID: "aider", Name: "Aider", Command: "aider", UsePTY: true},
+		},
+	}
+	agents := ResolveAgents(file, nil)
+	if len(agents) != 5 {
+		t.Fatalf("expected 5 agents, got %d", len(agents))
+	}
+	found := false
+	for _, a := range agents {
+		if a.ID == "aider" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("extra agent not found")
+	}
+}
+
+func TestResolveAgentsReplace(t *testing.T) {
+	file := &FleetFile{
+		Agents: []AgentConfig{
+			{ID: "only", Name: "Only", Command: "echo"},
+		},
+	}
+	agents := ResolveAgents(file, nil)
+	if len(agents) != 1 || agents[0].ID != "only" {
+		t.Fatalf("expected only replacement agent, got %#v", agents)
+	}
+}
+
+func TestEnvOverride(t *testing.T) {
+	t.Setenv("FLEET_CLAUDE_CMD", "/custom/claude")
+	agents := ResolveAgents(nil, nil)
+	for _, a := range agents {
+		if a.ID == AgentClaude {
+			if a.Command != "/custom/claude" {
+				t.Fatalf("env override failed: %s", a.Command)
+			}
+			return
+		}
+	}
+	t.Fatal("claude not found")
+}
+
+func TestSlugify(t *testing.T) {
+	if slugify("My Agent!") != "my-agent" {
+		t.Fatalf("slugify: %q", slugify("My Agent!"))
+	}
+}
+
+func TestSessionRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	// point config dir via HOME
+	t.Setenv("HOME", dir)
+	s := Session{LastCwd: "/tmp/proj", LastAgentID: AgentGrok, Worktrees: map[string]string{"claude": "/tmp/wt"}}
+	if err := SaveSession(s); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSession()
+	if got.LastCwd != s.LastCwd || got.LastAgentID != s.LastAgentID {
+		t.Fatalf("session mismatch: %#v", got)
+	}
+	if got.Worktrees["claude"] != "/tmp/wt" {
+		t.Fatalf("worktrees: %#v", got.Worktrees)
+	}
+}
+
+func TestLoadFleetFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fleet.toml")
+	content := `
+[[extra_agents]]
+id = "codex"
+name = "Codex"
+command = "codex"
+use_pty = true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLEET_CONFIG", path)
+	file, loaded, err := LoadFleetFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != path {
+		t.Fatalf("loaded path %s", loaded)
+	}
+	if len(file.Extra) != 1 || file.Extra[0].ID != "codex" {
+		t.Fatalf("extra: %#v", file.Extra)
+	}
+}

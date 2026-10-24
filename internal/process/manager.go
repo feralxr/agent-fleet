@@ -11,19 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/feralxr/agent-fleet/internal/config"
 )
 
-// Status represents the current state of an agent process.
 type Status string
 
 const (
-	StatusIdle      Status = "idle"
-	StatusRunning   Status = "running"
-	StatusWaiting   Status = "waiting" // running but likely needs user input
-	StatusError     Status = "error"
-	StatusStopped   Status = "stopped"
-	StatusMissing   Status = "missing" // binary not found on PATH
+	StatusIdle    Status ="idle"
+	StatusRunning Status = "running"
+	StatusWaiting Status = "waiting"
+	StatusError   Status = "error"
+	StatusStopped Status = "stopped"
+	StatusMissing Status = "missing"
 )
 
 const (
@@ -31,19 +31,20 @@ const (
 	trimToLines    = 600
 )
 
-// AgentProcess tracks a single agent instance.
 type AgentProcess struct {
-	ID          config.AgentID
-	Name        string
-	Status      Status
-	Available   bool // true if the binary exists on PATH
-	CmdPath     string
-	WorktreePath string // optional isolated git worktree
+	ID           config.AgentID
+	Name         string
+	Status       Status
+	Available    bool
+	CmdPath      string
+	WorktreePath string
+	UsePTY       bool
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
+	ptmx   *os.File
 	cancel chan struct{}
-	done   chan struct{} // closed when the process has fully exited
+	done   chan struct{}
 
 	Output  []string
 	mu      sync.Mutex
@@ -51,7 +52,6 @@ type AgentProcess struct {
 	lastErr string
 }
 
-// Manager owns all agent processes.
 type Manager struct {
 	agents  map[config.AgentID]*AgentProcess
 	configs []config.AgentConfig
@@ -59,8 +59,6 @@ type Manager struct {
 	cwd     string
 }
 
-// NewManager creates a process manager rooted at the given working directory.
-// Pass a session to apply custom command overrides; nil is fine.
 func NewManager(cwd string, session *config.Session) *Manager {
 	cfgs := config.DefaultAgentsWithSession(session)
 	m := &Manager{
@@ -68,12 +66,9 @@ func NewManager(cwd string, session *config.Session) *Manager {
 		configs: cfgs,
 		cwd:     cwd,
 	}
-
 	for _, a := range cfgs {
 		p := &AgentProcess{
-			ID:     a.ID,
-			Name:   a.Name,
-			Status: StatusIdle,
+			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
 			Output: make([]string, 0, 128),
 		}
 		if session != nil && session.Worktrees != nil {
@@ -89,11 +84,9 @@ func NewManager(cwd string, session *config.Session) *Manager {
 	return m
 }
 
-// List returns agents in stable order.
 func (m *Manager) List() []*AgentProcess {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	out := make([]*AgentProcess, 0, len(m.agents))
 	for _, a := range m.configs {
 		if p, ok := m.agents[a.ID]; ok {
@@ -103,14 +96,12 @@ func (m *Manager) List() []*AgentProcess {
 	return out
 }
 
-// Get returns a single agent process (may be nil).
 func (m *Manager) Get(id config.AgentID) *AgentProcess {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.agents[id]
 }
 
-// Start launches the given agent if it is not already running.
 func (m *Manager) Start(id config.AgentID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -119,33 +110,56 @@ func (m *Manager) Start(id config.AgentID) error {
 	if !ok {
 		return fmt.Errorf("unknown agent: %s", id)
 	}
-
-	if p.Status == StatusRunning {
+	if p.Status == StatusRunning || p.Status == StatusWaiting {
 		return nil
 	}
-
-	// Re-probe in case the binary appeared after startup.
-	p.probe(m)
+	cfg := m.findConfig(id)
+	if cfg == nil {
+		return fmt.Errorf("no config for agent %s", id)
+	}
+	p.probeWith(*cfg)
 	if !p.Available {
 		p.Status = StatusMissing
 		p.append(fmt.Sprintf("[fleet] binary not found: %s", p.CmdPath))
 		return fmt.Errorf("%s binary not found on PATH (%s)", p.Name, p.CmdPath)
 	}
 
-	cfg := m.findConfig(id)
-	if cfg == nil {
-		return fmt.Errorf("no config for agent %s", id)
-	}
-
-	cmd := exec.Command(cfg.Command, cfg.Args...)
 	runDir := m.cwd
 	if p.WorktreePath != "" {
 		runDir = p.WorktreePath
 	}
+	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = runDir
 	cmd.Env = os.Environ()
 
-	// Create all pipes *before* Start so we keep a live stdin handle.
+	cmdLine := cfg.Command
+	if len(cfg.Args) > 0 {
+		cmdLine += " " + strings.Join(cfg.Args, " ")
+	}
+
+	if cfg.UsePTY {
+		ptmx, err := pty.Start(cmd)
+		if err != nil {
+			p.Status = StatusError
+			p.lastErr = err.Error()
+			p.append(fmt.Sprintf("[fleet] failed to start pty: %v", err))
+			return err
+		}
+		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 32, Cols: 120})
+		p.cmd = cmd
+		p.ptmx = ptmx
+		p.stdin = nil
+		p.Status = StatusRunning
+		p.started = time.Now()
+		p.cancel = make(chan struct{})
+		p.done = make(chan struct{})
+		p.lastErr = ""
+		p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pty) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
+		go m.stream(p, ptmx)
+		go m.wait(p)
+		return nil
+	}
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("stdin pipe: %w", err)
@@ -153,14 +167,13 @@ func (m *Manager) Start(id config.AgentID) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("stdout pipe: %w", err)
+		return err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("stderr pipe: %w", err)
+		return err
 	}
-
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		p.Status = StatusError
@@ -168,28 +181,21 @@ func (m *Manager) Start(id config.AgentID) error {
 		p.append(fmt.Sprintf("[fleet] failed to start: %v", err))
 		return err
 	}
-
 	p.cmd = cmd
 	p.stdin = stdin
+	p.ptmx = nil
 	p.Status = StatusRunning
 	p.started = time.Now()
 	p.cancel = make(chan struct{})
 	p.done = make(chan struct{})
 	p.lastErr = ""
-	cmdLine := cfg.Command
-	if len(cfg.Args) > 0 {
-		cmdLine += " " + strings.Join(cfg.Args, " ")
-	}
-	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
-
-	go m.stream(p, stdout, "out")
-	go m.stream(p, stderr, "err")
+	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pipes) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
+	go m.stream(p, stdout)
+	go m.stream(p, stderr)
 	go m.wait(p)
-
 	return nil
 }
 
-// Stop terminates a running agent cleanly.
 func (m *Manager) Stop(id config.AgentID) error {
 	m.mu.Lock()
 	p, ok := m.agents[id]
@@ -197,45 +203,39 @@ func (m *Manager) Stop(id config.AgentID) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown agent: %s", id)
 	}
-
-	if p.Status != StatusRunning || p.cmd == nil || p.cmd.Process == nil {
-		if p.Status == StatusRunning {
-			p.Status = StatusStopped
-		}
+	if p.Status != StatusRunning && p.Status != StatusWaiting {
 		m.mu.Unlock()
 		return nil
 	}
-
-	// Signal the streaming goroutines to stop.
+	if p.cmd == nil || p.cmd.Process == nil {
+		p.Status = StatusStopped
+		m.mu.Unlock()
+		return nil
+	}
 	select {
 	case <-p.cancel:
-		// already closed
 	default:
 		close(p.cancel)
 	}
-
-	// Close stdin so the agent sees EOF (helps graceful shutdown for some tools).
 	if p.stdin != nil {
 		_ = p.stdin.Close()
 		p.stdin = nil
 	}
-
-	// Ask the process to exit, then force-kill if needed.
+	if p.ptmx != nil {
+		_ = p.ptmx.Close()
+		p.ptmx = nil
+	}
 	_ = p.cmd.Process.Signal(os.Interrupt)
-
 	cmd := p.cmd
 	done := p.done
 	m.mu.Unlock()
 
-	// Wait a short time for graceful exit, then kill.
 	select {
 	case <-done:
-		// exited cleanly
 	case <-time.After(1500 * time.Millisecond):
 		_ = cmd.Process.Kill()
 		<-done
 	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p.Status = StatusStopped
@@ -243,39 +243,38 @@ func (m *Manager) Stop(id config.AgentID) error {
 	return nil
 }
 
-// Restart stops (if running) then starts the agent.
 func (m *Manager) Restart(id config.AgentID) error {
 	_ = m.Stop(id)
-	// tiny pause so the OS releases the process table entry
 	time.Sleep(100 * time.Millisecond)
 	return m.Start(id)
 }
 
-// Send writes a prompt to the agent's stdin.
-// The newline is always appended.
 func (m *Manager) Send(id config.AgentID, text string) error {
 	m.mu.RLock()
 	p := m.agents[id]
 	m.mu.RUnlock()
-
 	if p == nil {
 		return fmt.Errorf("unknown agent: %s", id)
 	}
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	if p.Status != StatusRunning || p.stdin == nil {
+	if p.Status != StatusRunning && p.Status != StatusWaiting {
 		return fmt.Errorf("%s is not running", p.Name)
 	}
-
-	_, err := io.WriteString(p.stdin, text+"\n")
+	payload := text + "\n"
+	var err error
+	switch {
+	case p.ptmx != nil:
+		_, err = p.ptmx.Write([]byte(payload))
+	case p.stdin != nil:
+		_, err = io.WriteString(p.stdin, payload)
+	default:
+		return fmt.Errorf("%s has no writable input", p.Name)
+	}
 	if err != nil {
 		p.lastErr = err.Error()
 		return fmt.Errorf("write to %s: %w", p.Name, err)
 	}
-
-	// Echo the prompt into the output buffer so the user sees what was sent.
 	p.Output = append(p.Output, fmt.Sprintf("› %s", text))
 	if len(p.Output) > maxOutputLines {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
@@ -286,7 +285,20 @@ func (m *Manager) Send(id config.AgentID, text string) error {
 	return nil
 }
 
-// ClearOutput wipes the output buffer for an agent.
+func (m *Manager) SetPTYSize(id config.AgentID, rows, cols uint16) {
+	m.mu.RLock()
+	p := m.agents[id]
+	m.mu.RUnlock()
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ptmx != nil && rows > 0 && cols > 0 {
+		_ = pty.Setsize(p.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+	}
+}
+
 func (m *Manager) ClearOutput(id config.AgentID) {
 	m.mu.RLock()
 	p := m.agents[id]
@@ -299,8 +311,6 @@ func (m *Manager) ClearOutput(id config.AgentID) {
 	p.mu.Unlock()
 }
 
-// NextNeedingAttention returns the index in List() order of the next agent
-// that needs attention after afterID (wrapping). Returns -1 if none.
 func (m *Manager) NextNeedingAttention(afterID config.AgentID) config.AgentID {
 	list := m.List()
 	if len(list) == 0 {
@@ -322,7 +332,6 @@ func (m *Manager) NextNeedingAttention(afterID config.AgentID) config.AgentID {
 	return ""
 }
 
-// SetWorktree assigns an isolated worktree path to an agent (empty clears it).
 func (m *Manager) SetWorktree(id config.AgentID, path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -331,7 +340,6 @@ func (m *Manager) SetWorktree(id config.AgentID, path string) {
 	}
 }
 
-// Worktree returns the worktree path for an agent (may be empty).
 func (m *Manager) Worktree(id config.AgentID) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -341,7 +349,6 @@ func (m *Manager) Worktree(id config.AgentID) string {
 	return ""
 }
 
-// EffectiveCwd is the directory the agent will run in (worktree or shared cwd).
 func (m *Manager) EffectiveCwd(id config.AgentID) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -351,28 +358,24 @@ func (m *Manager) EffectiveCwd(id config.AgentID) string {
 	return m.cwd
 }
 
-// SetCwd updates the working directory used for new processes.
 func (m *Manager) SetCwd(cwd string) {
 	m.mu.Lock()
 	m.cwd = cwd
 	m.mu.Unlock()
 }
 
-// Cwd returns the current working directory.
 func (m *Manager) Cwd() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cwd
 }
 
-// LastError returns the most recent error string for an agent (may be empty).
 func (p *AgentProcess) LastError() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.lastErr
 }
 
-// SnapshotOutput returns a copy of recent output lines.
 func (p *AgentProcess) SnapshotOutput() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -381,7 +384,19 @@ func (p *AgentProcess) SnapshotOutput() []string {
 	return out
 }
 
-// probeWith checks whether the configured binary exists.
+func (p *AgentProcess) NeedsAttention() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Status == StatusWaiting || p.Status == StatusError
+}
+
+func (p *AgentProcess) ShortPath() string {
+	if p.CmdPath == "" {
+		return ""
+	}
+	return filepath.Base(p.CmdPath)
+}
+
 func (p *AgentProcess) probeWith(cfg config.AgentConfig) {
 	path, err := exec.LookPath(cfg.Command)
 	if err != nil {
@@ -392,7 +407,6 @@ func (p *AgentProcess) probeWith(cfg config.AgentConfig) {
 		}
 		return
 	}
-
 	p.Available = true
 	p.CmdPath = path
 	if p.Status == StatusMissing {
@@ -400,44 +414,46 @@ func (p *AgentProcess) probeWith(cfg config.AgentConfig) {
 	}
 }
 
-// probe re-checks using the manager's config list.
-func (p *AgentProcess) probe(m *Manager) {
-	cfg := m.findConfig(p.ID)
-	if cfg == nil {
-		p.Available = false
-		p.CmdPath = ""
-		p.Status = StatusMissing
-		return
+func (m *Manager) findConfig(id config.AgentID) *config.AgentConfig {
+	for _, a := range m.configs {
+		if a.ID == id {
+			cp := a
+			return &cp
+		}
 	}
-	p.probeWith(*cfg)
+	return nil
 }
 
-func (m *Manager) stream(p *AgentProcess, r io.Reader, _ string) {
+func (m *Manager) stream(p *AgentProcess, r io.Reader) {
 	scanner := bufio.NewScanner(r)
-	// Increase buffer for long lines (agent output can be verbose).
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
-
 	for scanner.Scan() {
 		select {
 		case <-p.cancel:
 			return
 		default:
-			p.append(scanner.Text())
+			line := stripANSI(scanner.Text())
+			if line == "" {
+				continue
+			}
+			p.append(line)
 		}
 	}
 }
 
 func (m *Manager) wait(p *AgentProcess) {
 	err := p.cmd.Wait()
-
 	p.mu.Lock()
 	if p.stdin != nil {
 		_ = p.stdin.Close()
 		p.stdin = nil
 	}
-
-	if p.Status == StatusRunning {
+	if p.ptmx != nil {
+		_ = p.ptmx.Close()
+		p.ptmx = nil
+	}
+	if p.Status == StatusRunning || p.Status == StatusWaiting {
 		if err != nil {
 			p.Status = StatusError
 			p.lastErr = err.Error()
@@ -451,8 +467,6 @@ func (m *Manager) wait(p *AgentProcess) {
 		}
 	}
 	p.mu.Unlock()
-
-	// Signal that the process has fully exited.
 	select {
 	case <-p.done:
 	default:
@@ -467,88 +481,66 @@ func (p *AgentProcess) append(line string) {
 	if len(p.Output) > maxOutputLines {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
 	}
-	// Soft heuristic: if the process is running and the latest lines look like a prompt, mark waiting.
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
 		if looksLikePrompt(line) {
 			p.Status = StatusWaiting
-		} else if p.Status == StatusWaiting && !looksLikePrompt(line) {
-			// New non-prompt output → back to running
+		} else if p.Status == StatusWaiting {
 			p.Status = StatusRunning
 		}
 	}
 }
 
-// looksLikePrompt detects common "agent is waiting for you" patterns.
 func looksLikePrompt(line string) bool {
 	s := strings.TrimSpace(strings.ToLower(line))
 	if s == "" {
 		return false
 	}
 	patterns := []string{
-		"y/n",
-		"(y/n)",
-		"[y/n]",
-		"yes/no",
-		"allow?",
-		"approve",
-		"permission",
-		"press enter",
-		"continue?",
-		"confirm",
-		"waiting for",
-		"your input",
-		"type a message",
-		"> ",
-		"❯ ",
-		"? ",
-		"do you want",
-		"shall i",
-		"may i",
-		"ok to",
-		"proceed?",
+		"y/n", "(y/n)", "[y/n]", "yes/no", "allow?", "approve", "permission",
+		"press enter", "continue?", "confirm", "waiting for", "your input",
+		"do you want", "shall i", "may i", "ok to", "proceed?",
 	}
 	for _, ptn := range patterns {
 		if strings.Contains(s, ptn) {
 			return true
 		}
 	}
-	// Ends with ? and short → likely a question
-	if strings.HasSuffix(s, "?") && len(s) < 120 {
-		return true
-	}
-	return false
+	return strings.HasSuffix(s, "?") && len(s) < 120
 }
 
-// NeedsAttention reports whether the agent is blocked on the user.
-func (p *AgentProcess) NeedsAttention() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.Status == StatusWaiting || p.Status == StatusError
-}
-
-// MarkRunning forces status back to running (e.g. after user sent input).
-func (p *AgentProcess) MarkRunning() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.Status == StatusWaiting {
-		p.Status = StatusRunning
-	}
-}
-
-func (m *Manager) findConfig(id config.AgentID) *config.AgentConfig {
-	for _, a := range m.configs {
-		if a.ID == id {
-			cp := a
-			return &cp
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) {
+			if s[i+1] == '[' {
+				i += 2
+				for i < len(s) && !((s[i] >= '@' && s[i] <= '_') || (s[i] >= 'a' && s[i] <= 'z')) {
+					i++
+				}
+				if i < len(s) {
+					i++
+				}
+				continue
+			}
+			if s[i+1] == ']' {
+				i += 2
+				for i < len(s) && s[i] != 0x07 && s[i] != 0x1b {
+					i++
+				}
+				if i < len(s) && s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+					i += 2
+				} else if i < len(s) {
+					i++
+				}
+				continue
+			}
+			i += 2
+			continue
 		}
+		b.WriteByte(s[i])
+		i++
 	}
-	return nil
-}
-
-// Helper so UI can show a short path.
-func (p *AgentProcess) ShortPath() string {
-	if p.CmdPath == "" {
-		return ""
-	}
-	return filepath.Base(p.CmdPath)
+	return b.String()
 }

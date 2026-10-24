@@ -1,22 +1,22 @@
 # Agent Fleet
 
-Lightweight terminal UI for running and switching between multiple coding agents side-by-side.
+Lightweight **TUI cockpit** for running and switching between multiple coding agents — with isolation, fan-out, and review tools.
 
-Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
+Default agents: **Claude Code**, **Cursor**, **OpenCode**, **Grok**.  
+Add any CLI via `fleet.toml`.
 
-## Features
+## Highlights
 
-- Launch / stop / restart any agent
-- **Git worktrees per agent** — isolated checkouts so agents don't clash
-- **Fan-out** — send one prompt to every running agent
-- **Attention jump** — space hops to agents waiting for input
-- **Diff review** — `g` shows `git diff --stat` per agent
-- Split view (watch two agents at once)
-- Change working directory from the TUI
-- Shared prompt input + live markdown output
-- Session persistence (cwd, active agent, worktrees)
-- Clipboard copy
-- Binary detection
+| Area | Features |
+|------|----------|
+| **Control** | Start / stop / restart, split view, session restore |
+| **Isolation** | Git worktree per agent (`w`) |
+| **Parallel** | Fan-out one prompt to all running agents (`f`) |
+| **Attention** | Waiting detection + jump with `space` |
+| **Review** | `git diff --stat` panel (`g`) |
+| **PTY** | Real PTY by default for interactive agent TUIs |
+| **Config** | `fleet.toml` + env overrides + custom profiles |
+| **Ship** | Tests, Makefile, GitHub Actions multi-arch releases |
 
 ## Install
 
@@ -24,86 +24,144 @@ Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
 go install github.com/feralxr/agent-fleet/cmd/fleet@latest
 ```
 
-Or from source:
+From source:
 
 ```bash
 git clone https://github.com/feralxr/agent-fleet.git
 cd agent-fleet
-go build -o fleet ./cmd/fleet
+make build    # or: go build -o fleet ./cmd/fleet
 ```
 
-## Usage
+## Quick start
 
 ```bash
 cd /path/to/your/repo
 fleet
 ```
 
-### Keybindings
-
-| Key        | Action                                      |
-|------------|---------------------------------------------|
-| `↑` / `k`  | Previous agent                              |
-| `↓` / `j`  | Next agent                                  |
-| `s`        | Start selected agent                        |
-| `x`        | Stop selected agent                         |
-| `r`        | Restart selected agent                      |
-| `space`    | Jump to next agent that needs attention     |
-| `g`        | Toggle git diff --stat for selected agent   |
-| `w`        | Create / attach git worktree for agent      |
-| `f`        | Fan-out mode (next prompt → all running)    |
-| `d`        | Change working directory                    |
-| `v`        | Toggle split view                           |
-| `i`        | Focus prompt input                          |
-| `Esc`      | Cancel / unfocus                            |
-| `Enter`    | Send prompt / confirm path / fan-out        |
-| `c`        | Copy output to clipboard                    |
-| `ctrl+l`   | Clear output                                |
-| `?`        | Toggle help                                 |
-| `q`        | Quit (saves session)                        |
-
-### Worktrees
-
-Press `w` on an agent while inside a git repo. Fleet creates:
-
+```text
+w          create worktree for selected agent
+s          start agent (PTY mode by default)
+f          fan-out mode → type prompt → Enter
+space      jump to agent that needs input
+g          toggle git diff view
+v          split view
+q          quit (saves session)
 ```
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Previous agent |
+| `↓` / `j` | Next agent |
+| `s` | Start |
+| `x` | Stop |
+| `r` | Restart |
+| `space` | Jump to next agent needing attention |
+| `w` | Create / attach git worktree |
+| `f` | Fan-out prompt to all running agents |
+| `g` | Toggle git diff --stat |
+| `d` | Change working directory |
+| `v` | Toggle split view |
+| `i` | Focus prompt input |
+| `Esc` | Cancel / unfocus |
+| `Enter` | Send / confirm |
+| `c` | Copy output |
+| `ctrl+l` | Clear output |
+| `?` | Help |
+| `q` | Quit |
+
+## Configuration (`fleet.toml`)
+
+Search order:
+
+1. `$FLEET_CONFIG`
+2. `./fleet.toml`
+3. `~/.config/agent-fleet/fleet.toml`
+
+Generate an example:
+
+```bash
+fleet --init-config
+# or: make example
+```
+
+### Add custom agents
+
+```toml
+use_pty = true
+
+[[extra_agents]]
+id = "aider"
+name = "Aider"
+command = "aider"
+args = ["--no-git"]
+use_pty = true
+
+[[extra_agents]]
+id = "codex"
+name = "Codex"
+command = "codex"
+use_pty = true
+```
+
+### Replace built-ins
+
+Use `[[agents]]` instead of `[[extra_agents]]` to define the full list yourself.
+
+### Env overrides
+
+| Variable | Effect |
+|----------|--------|
+| `FLEET_CLAUDE_CMD` | Override Claude binary |
+| `FLEET_CURSOR_CMD` | Override Cursor binary |
+| `FLEET_OPENCODE_CMD` | Override OpenCode |
+| `FLEET_GROK_CMD` | Override Grok |
+| `FLEET_<ID>_CMD` | Override any custom agent id |
+
+### PTY vs pipes
+
+- `use_pty = true` (default for built-ins): better interactive TUI compatibility; ANSI stripped for the log pane.
+- `use_pty = false`: classic stdin/stdout pipes.
+
+## Worktrees
+
+`w` creates:
+
+```text
 <repo>/.fleet/worktrees/<agent-id>
 ```
 
-on branch `fleet/<agent-id>`. That agent then runs with its cwd set to the worktree so parallel edits don't collide.
+on branch `fleet/<agent-id>`. The agent’s process cwd is set to that path. Add `.fleet/` to `.gitignore` if you want worktrees local-only.
 
-Add `.fleet/` to your repo's `.gitignore` if you want to keep worktrees local-only.
+## Session
 
-### Diff review
+Saved on quit to `~/.config/agent-fleet/session.json`:
 
-Press **`g`** to toggle a `git diff --stat` view for the selected agent's effective directory (worktree or shared cwd). Sidebar shows a one-line dirty summary when the tree is not clean. Press **`g`** again to return to live output.
+- Last cwd
+- Last active agent
+- Worktree map
 
-### Attention
+## Development
 
-Agents show `◐` (cyan) when recent output looks like a question or approval prompt (`y/n`, "allow?", etc.). Press **space** to jump to the next agent that needs you. Sending a prompt clears the waiting state.
+```bash
+make test
+make build
+make release   # cross-compile to dist/
+```
 
-### Fan-out
+CI runs tests on every push; tagged releases (`v*`) publish linux/darwin/windows binaries + checksums.
 
-1. Start two or more agents (`s`)
-2. Press `f`
-3. Type a prompt and press Enter — every running agent receives it
-
-## Configuration
-
-| Agent       | Default command | Override env var     |
-|-------------|-----------------|----------------------|
-| Claude Code | `claude`        | `FLEET_CLAUDE_CMD`   |
-| Cursor      | `cursor agent`  | `FLEET_CURSOR_CMD`   |
-| OpenCode    | `opencode`      | `FLEET_OPENCODE_CMD` |
-| Grok        | `grok`          | `FLEET_GROK_CMD`     |
-
-Session file: `~/.config/agent-fleet/session.json`
+```bash
+fleet --version
+```
 
 ## Requirements
 
 - Go 1.22+
-- `git` on PATH (for worktrees)
-- Agent CLIs installed and on `$PATH`
+- `git` (for worktrees / diff)
+- Agent CLIs on `$PATH`
 
 ## License
 
