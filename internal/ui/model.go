@@ -42,6 +42,7 @@ type keyMap struct {
 	Worktree key.Binding
 	Fan      key.Binding
 	Jump     key.Binding
+	Diff     key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -114,17 +115,21 @@ func defaultKeyMap() keyMap {
 			key.WithKeys(" "),
 			key.WithHelp("space", "jump to needs attention"),
 		),
+		Diff: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "toggle git diff"),
+		),
 	}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Jump, k.Worktree, k.Fan, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Start, k.Stop, k.Jump, k.Diff, k.Worktree, k.Fan, k.Help, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.Restart},
-		{k.Jump, k.Worktree, k.Fan, k.Cwd, k.Split},
+		{k.Jump, k.Diff, k.Worktree, k.Fan, k.Cwd, k.Split},
 		{k.FocusIn, k.FocusOut, k.Enter, k.Clear, k.Copy},
 		{k.Help, k.Quit},
 	}
@@ -149,6 +154,7 @@ type Model struct {
 	inputFocus   bool
 	pathMode     bool // true when editing working directory
 	fanMode      bool // next prompt fans to all running agents
+	showDiff     bool // show git diff --stat instead of agent output
 	split        bool // side-by-side output of two agents
 	statusMsg    string
 	lastTick     time.Time
@@ -221,6 +227,7 @@ func NewModel() Model {
 		inputFocus: false,
 		pathMode:   false,
 		fanMode:    false,
+		showDiff:   false,
 		split:      false,
 		statusMsg:  "Ready",
 	}
@@ -392,6 +399,18 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.statusMsg = fmt.Sprintf("jumped to %s", m.agents[m.selected].Name)
+		m.refreshViewport()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Diff):
+		m.showDiff = !m.showDiff
+		m.lastContent = "" // force redraw
+		m.lastContent2 = ""
+		if m.showDiff {
+			m.statusMsg = "diff view on — press g to return"
+		} else {
+			m.statusMsg = "diff view off"
+		}
 		m.refreshViewport()
 		return m, nil
 
@@ -631,6 +650,24 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 		return
 	}
 
+	if m.showDiff {
+		dir := m.manager.EffectiveCwd(id)
+		stat := gitutil.DiffStat(dir)
+		var content string
+		if stat == "" {
+			content = fmt.Sprintf("# %s — git diff\n\n`%s`\n\n_Working tree clean (or not a git repo)._\n", p.Name, dir)
+		} else {
+			content = fmt.Sprintf("# %s — git diff\n\n`%s`\n\n```\n%s\n```\n", p.Name, dir, stat)
+		}
+		content = m.renderMarkdown(content)
+		if content != *last {
+			*last = content
+			vp.SetContent(content)
+			vp.GotoTop()
+		}
+		return
+	}
+
 	lines := p.SnapshotOutput()
 	if len(lines) == 0 {
 		msg := fmt.Sprintf("%s is **%s**", p.Name, p.Status)
@@ -705,6 +742,9 @@ func (m Model) View() string {
 	if m.pathMode {
 		mode = subtleStyle.Render("  set cwd")
 	}
+	if m.showDiff {
+		mode = subtleStyle.Render("  diff")
+	}
 	header := lipgloss.JoinHorizontal(lipgloss.Center, title, mode)
 
 	leftWidth := 26
@@ -767,7 +807,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · space jump · s start · w worktree · f fan · v split · i input · q quit")
+		helpView = subtleStyle.Render(" ? help · space jump · g diff · s start · w worktree · f fan · v split · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -829,15 +869,24 @@ func (m Model) renderAgentList() string {
 		} else if a.Status == process.StatusWaiting {
 			st = "needs you"
 			if a.WorktreePath != "" {
-				st = "needs you · wt:" + gitutil.ShortName(a.WorktreePath)
+				st = "needs you · wt"
 			}
 		} else if a.WorktreePath != "" {
 			st = "wt:" + gitutil.ShortName(a.WorktreePath)
 			if a.Status == process.StatusRunning {
-				st += " · running"
+				st += " · run"
 			}
 		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
 			st = a.ShortPath()
+		}
+		// Append one-line diff summary when dirty
+		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
+			if d := gitutil.DiffShortOneLiner(dir); d != "" && d != "clean" {
+				if st != "" {
+					st += " · "
+				}
+				st += d
+			}
 		}
 		sec := subtleStyle.Render(fmt.Sprintf("    %s", st))
 		b.WriteString(sec + "\n")

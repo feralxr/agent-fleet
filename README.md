@@ -10,6 +10,7 @@ Supports **Claude Code**, **Cursor**, **OpenCode**, and **Grok**.
 - **Git worktrees per agent** — isolated checkouts so agents don't clash
 - **Fan-out** — send one prompt to every running agent
 - **Attention jump** — space hops to agents waiting for input
+- **Diff review** — `g` shows `git diff --stat` per agent
 - Split view (watch two agents at once)
 - Change working directory from the TUI
 - Shared prompt input + live markdown output
@@ -48,6 +49,7 @@ fleet
 | `x`        | Stop selected agent                         |
 | `r`        | Restart selected agent                      |
 | `space`    | Jump to next agent that needs attention     |
+| `g`        | Toggle git diff --stat for selected agent   |
 | `w`        | Create / attach git worktree for agent      |
 | `f`        | Fan-out mode (next prompt → all running)    |
 | `d`        | Change working directory                    |
@@ -71,6 +73,10 @@ Press `w` on an agent while inside a git repo. Fleet creates:
 on branch `fleet/<agent-id>`. That agent then runs with its cwd set to the worktree so parallel edits don't collide.
 
 Add `.fleet/` to your repo's `.gitignore` if you want to keep worktrees local-only.
+
+### Diff review
+
+Press **`g`** to toggle a `git diff --stat` view for the selected agent's effective directory (worktree or shared cwd). Sidebar shows a one-line dirty summary when the tree is not clean. Press **`g`** again to return to live output.
 
 ### Attention
 

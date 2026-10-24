@@ -121,3 +121,85 @@ func ShortName(wtPath string) string {
 	}
 	return filepath.Base(wtPath)
 }
+
+// DiffStat returns a short git diff --stat for path (worktree or repo cwd).
+// Includes unstaged + staged changes. Empty string if clean or not a repo.
+func DiffStat(path string) string {
+	if path == "" || !IsRepo(path) {
+		return ""
+	}
+	// Unstaged + untracked summary
+	cmd := exec.Command("git", "-C", path, "diff", "--stat", "HEAD")
+	out, err := cmd.CombinedOutput()
+	stat := strings.TrimSpace(string(out))
+	if err != nil && stat == "" {
+		// Fallback: unstaged only
+		cmd = exec.Command("git", "-C", path, "diff", "--stat")
+		out, err = cmd.CombinedOutput()
+		stat = strings.TrimSpace(string(out))
+	}
+
+	// Also list untracked files briefly
+	cmd = exec.Command("git", "-C", path, "ls-files", "--others", "--exclude-standard")
+	untracked, _ := cmd.Output()
+	ut := strings.TrimSpace(string(untracked))
+
+	var b strings.Builder
+	if stat != "" {
+		b.WriteString(stat)
+	}
+	if ut != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		lines := strings.Split(ut, "\n")
+		b.WriteString(fmt.Sprintf("Untracked: %d file(s)", len(lines)))
+		max := 8
+		if len(lines) < max {
+			max = len(lines)
+		}
+		for i := 0; i < max; i++ {
+			b.WriteString("\n  + ")
+			b.WriteString(lines[i])
+		}
+		if len(lines) > max {
+			b.WriteString(fmt.Sprintf("\n  … +%d more", len(lines)-max))
+		}
+	}
+	return b.String()
+}
+
+// DiffShortOneLiner returns a single-line summary suitable for the sidebar.
+func DiffShortOneLiner(path string) string {
+	if path == "" || !IsRepo(path) {
+		return ""
+	}
+	cmd := exec.Command("git", "-C", path, "diff", "--shortstat", "HEAD")
+	out, err := cmd.Output()
+	s := strings.TrimSpace(string(out))
+	if err != nil || s == "" {
+		cmd = exec.Command("git", "-C", path, "status", "--porcelain")
+		out, err = cmd.Output()
+		if err != nil {
+			return ""
+		}
+		n := 0
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.TrimSpace(line) != "" {
+				n++
+			}
+		}
+		if n == 0 {
+			return "clean"
+		}
+		return fmt.Sprintf("%d changed", n)
+	}
+	// e.g. " 3 files changed, 20 insertions(+), 4 deletions(-)"
+	s = strings.ReplaceAll(s, "files changed", "files")
+	s = strings.ReplaceAll(s, "file changed", "file")
+	s = strings.ReplaceAll(s, "insertions(+)", "+")
+	s = strings.ReplaceAll(s, "insertion(+)", "+")
+	s = strings.ReplaceAll(s, "deletions(-)", "-")
+	s = strings.ReplaceAll(s, "deletion(-)", "-")
+	return strings.TrimSpace(s)
+}
