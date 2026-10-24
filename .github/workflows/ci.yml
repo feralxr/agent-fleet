@@ -3,9 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
-  release:
-    types: [published]
 
 jobs:
   test:
@@ -42,9 +41,10 @@ jobs:
               -o "dist/fleet-${OS}-${ARCH}${EXT}" ./cmd/fleet
           done
           cd dist && sha256sum * > checksums.txt
-      - name: Upload release assets
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
