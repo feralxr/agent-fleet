@@ -49,6 +49,7 @@ type keyMap struct {
 	LoadName key.Binding
 	HistUp   key.Binding
 	HistDown key.Binding
+	ModelSel key.Binding
 	PgUp     key.Binding
 	PgDown   key.Binding
 	HalfUp   key.Binding
@@ -153,6 +154,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("down"),
 			key.WithHelp("↓", "next prompt (input)"),
 		),
+		ModelSel: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "select model"),
+		),
 		PgUp: key.NewBinding(
 			key.WithKeys("pgup", "ctrl+b"),
 			key.WithHelp("pgup", "scroll up"),
@@ -207,6 +212,10 @@ type Model struct {
 	showDiff     bool // show git diff --stat instead of agent output
 	split        bool // side-by-side output of two agents
 	nameMode     bool // saving a named session
+	modelMode    bool // model picker open
+	modelCustom  bool // typing a custom model id
+	modelList    []string
+	modelIdx     int
 	histIdx      int  // -1 = not browsing history
 	statusMsg    string
 	lastTick     time.Time
@@ -371,6 +380,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modelMode {
+		return m.updateModelPicker(msg)
+	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		// stop all running agents on quit
@@ -381,9 +393,13 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.session.LastCwd = m.manager.Cwd()
 		m.session.LastAgentID = m.activeID
 		m.session.Worktrees = map[string]string{}
+		m.session.Models = map[string]string{}
 		for _, a := range m.agents {
 			if wt := m.manager.Worktree(a.ID); wt != "" {
 				m.session.Worktrees[string(a.ID)] = wt
+			}
+			if mod := m.manager.GetModel(a.ID); mod != "" {
+				m.session.Models[string(a.ID)] = mod
 			}
 		}
 		_ = config.SaveSession(m.session)
@@ -576,8 +592,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.ModelSel):
+		return m.openModelPicker()
+
 	case key.Matches(msg, m.keys.FocusIn):
-		if m.pathMode {
+		if m.pathMode || m.modelMode {
 			return m, nil
 		}
 		m.inputFocus = true
@@ -666,6 +685,20 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			return m, nil
+		}
+
+		if m.modelCustom {
+			id := m.agents[m.selected].ID
+			m.manager.SetModel(id, text)
+			m.modelCustom = false
+			m.inputFocus = false
+			m.input.Blur()
+			m.input.Reset()
+			m.input.Placeholder = "i  focus  ·  enter  send  ·  esc  cancel"
+			m.layout()
+			m.statusMsg = fmt.Sprintf("%s → %s (applies on next start)", m.agents[m.selected].Name, text)
+			m.agents = m.manager.List()
 			return m, nil
 		}
 
@@ -923,6 +956,82 @@ func (m *Model) refreshDiffCacheLazy() {
 			return // one git batch per tick max
 		}
 	}
+}
+
+
+func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
+	id := m.activeID
+	if len(m.agents) > 0 {
+		id = m.agents[m.selected].ID
+	}
+	list := m.manager.ModelsFor(id)
+	// Always allow custom entry as last item
+	list = append(append([]string{}, list...), "custom…")
+	m.modelList = list
+	m.modelIdx = 0
+	cur := m.manager.GetModel(id)
+	for i, s := range list {
+		if s == cur {
+			m.modelIdx = i
+			break
+		}
+	}
+	m.modelMode = true
+	m.statusMsg = fmt.Sprintf("model for %s — j/k select, enter confirm, esc cancel", id)
+	return m, nil
+}
+
+func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.FocusOut), key.Matches(msg, m.keys.Quit):
+		m.modelMode = false
+		m.statusMsg = "model select cancelled"
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.modelIdx > 0 {
+			m.modelIdx--
+		} else if len(m.modelList) > 0 {
+			m.modelIdx = len(m.modelList) - 1
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.modelIdx < len(m.modelList)-1 {
+			m.modelIdx++
+		} else {
+			m.modelIdx = 0
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Enter):
+		if len(m.modelList) == 0 {
+			m.modelMode = false
+			return m, nil
+		}
+		choice := m.modelList[m.modelIdx]
+		id := m.agents[m.selected].ID
+		if choice == "custom…" {
+			m.modelMode = false
+			m.inputFocus = true
+			m.nameMode = false
+			m.pathMode = false
+			m.input.SetValue(m.manager.GetModel(id))
+			m.input.Placeholder = "Type model id and press Enter…"
+			m.input.Focus()
+			m.statusMsg = "custom model — Enter to set, Esc cancel"
+			// mark pending custom model via status convention handled in updateInput
+			m.fanMode = false
+			m.modelMode = false
+			// reuse nameMode=false; use a dedicated flag
+			m.modelCustom = true
+			m.layout()
+			return m, textarea.Blink
+		}
+		m.manager.SetModel(id, choice)
+		m.modelMode = false
+		m.statusMsg = fmt.Sprintf("%s → %s (applies on next start)", m.agents[m.selected].Name, choice)
+		m.agents = m.manager.List()
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
@@ -1183,6 +1292,9 @@ func (m Model) View() string {
 	if m.nameMode {
 		badges = append(badges, "save")
 	}
+	if m.modelMode || m.modelCustom {
+		badges = append(badges, "model")
+	}
 	if m.inputFocus && !m.pathMode && !m.nameMode && !m.fanMode {
 		badges = append(badges, "input")
 	}
@@ -1327,7 +1439,30 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · j/k or 1-9 · s start · space jump · i prompt · pgup/pgdn scroll · q quit")
+		helpView = subtleStyle.Render(" ? help · j/k · m model · s start · space jump · i prompt · q quit")
+	}
+
+	if m.modelMode {
+		// Model picker panel
+		var pb strings.Builder
+		id := m.activeID
+		if len(m.agents) > 0 {
+			id = m.agents[m.selected].ID
+		}
+		pb.WriteString(sectionStyle.Render(fmt.Sprintf(" MODEL · %s ", id)) + "\n\n")
+		for i, name := range m.modelList {
+			prefix := "  "
+			line := name
+			if i == m.modelIdx {
+				prefix = activeBar.Render("▌") + " "
+				line = selectedStyle.Render(name)
+			}
+			pb.WriteString(prefix + line + "\n")
+		}
+		pb.WriteString("\n" + subtleStyle.Render(" j/k move  enter set  esc cancel"))
+		picker := rightStyle.Width(m.width - 4).Render(pb.String())
+		sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#27272A")).Render(strings.Repeat("─", max(m.width, 1)))
+		return lipgloss.JoinVertical(lipgloss.Left, header, sep, picker, status, helpView)
 	}
 
 	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#27272A")).Render(strings.Repeat("─", max(m.width, 1)))
@@ -1411,6 +1546,12 @@ func (m Model) renderAgentList() string {
 			if a.UsePTY {
 				st += " · pty"
 			}
+		}
+		if a.Model != "" {
+			if st != "" {
+				st += " · "
+			}
+			st += a.Model
 		}
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
 			if d := m.cachedDiffShort(dir); d != "" && d != "clean" {

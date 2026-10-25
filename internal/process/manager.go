@@ -39,6 +39,7 @@ type AgentProcess struct {
 	CmdPath      string
 	WorktreePath string
 	UsePTY       bool
+	Model        string // selected model (passed as --model on start)
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -71,11 +72,19 @@ func NewManager(cwd string, session *config.Session) *Manager {
 		p := &AgentProcess{
 			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
 			Output: make([]string, 0, 128),
+			Model: a.Model,
 		}
-		if session != nil && session.Worktrees != nil {
-			if wt, ok := session.Worktrees[string(a.ID)]; ok && wt != "" {
-				if st, err := os.Stat(wt); err == nil && st.IsDir() {
-					p.WorktreePath = wt
+		if session != nil {
+			if session.Worktrees != nil {
+				if wt, ok := session.Worktrees[string(a.ID)]; ok && wt != "" {
+					if st, err := os.Stat(wt); err == nil && st.IsDir() {
+						p.WorktreePath = wt
+					}
+				}
+			}
+			if session.Models != nil {
+				if mod, ok := session.Models[string(a.ID)]; ok {
+					p.Model = mod
 				}
 			}
 		}
@@ -179,13 +188,17 @@ func (m *Manager) Start(id config.AgentID) error {
 	if p.WorktreePath != "" {
 		runDir = p.WorktreePath
 	}
-	cmd := exec.Command(cfg.Command, cfg.Args...)
+	args := append([]string{}, cfg.Args...)
+	if model := strings.TrimSpace(p.Model); model != "" {
+		args = append(args, config.ModelFlag(id), model)
+	}
+	cmd := exec.Command(cfg.Command, args...)
 	cmd.Dir = runDir
 	cmd.Env = os.Environ()
 
 	cmdLine := cfg.Command
-	if len(cfg.Args) > 0 {
-		cmdLine += " " + strings.Join(cfg.Args, " ")
+	if len(args) > 0 {
+		cmdLine += " " + strings.Join(args, " ")
 	}
 
 	if cfg.UsePTY {
@@ -592,6 +605,34 @@ func FormatUptime(d time.Duration) string {
 		return fmt.Sprintf("%dm%02ds", s/60, s%60)
 	}
 	return fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
+}
+
+// SetModel sets the model for an agent (applied on next Start).
+func (m *Manager) SetModel(id config.AgentID, model string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.agents[id]; ok {
+		p.Model = strings.TrimSpace(model)
+	}
+}
+
+// GetModel returns the selected model for an agent.
+func (m *Manager) GetModel(id config.AgentID) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if p, ok := m.agents[id]; ok {
+		return p.Model
+	}
+	return ""
+}
+
+// ModelsFor returns the catalog for an agent (config override or defaults).
+func (m *Manager) ModelsFor(id config.AgentID) []string {
+	cfg := m.findConfig(id)
+	if cfg != nil && len(cfg.Models) > 0 {
+		return cfg.Models
+	}
+	return config.DefaultModels(id)
 }
 
 // StopAll stops every running agent.

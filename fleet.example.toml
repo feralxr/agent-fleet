@@ -27,3 +27,12 @@ use_pty = true
 # name = "Claude Code"
 # command = "claude"
 # use_pty = true
+
+
+# Optional: override model catalog + default for an agent
+# [[extra_agents]]
+# id = "claude"
+# name = "Claude"
+# command = "claude"
+# model = "sonnet"
+# models = ["sonnet", "opus", "haiku", "fable"]

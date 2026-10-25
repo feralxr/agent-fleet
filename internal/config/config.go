@@ -28,6 +28,8 @@ type AgentConfig struct {
 	Args        []string `toml:"args" json:"args"`
 	Description string   `toml:"description" json:"description"`
 	UsePTY      bool     `toml:"use_pty" json:"use_pty"`
+	Models      []string `toml:"models" json:"models,omitempty"` // optional catalog override
+	Model       string   `toml:"model" json:"model,omitempty"`   // default model for this agent
 }
 
 // FleetFile is the on-disk fleet.toml schema.
@@ -46,6 +48,7 @@ type Session struct {
 	Worktrees   map[string]string       `json:"worktrees,omitempty"`
 	PromptHist  []string                `json:"prompt_history,omitempty"`
 	Named       map[string]NamedSession `json:"named_sessions,omitempty"`
+	Models      map[string]string       `json:"models,omitempty"` // agent id → model id
 }
 
 // NamedSession is a saved layout the user can restore later.

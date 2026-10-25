@@ -92,6 +92,7 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 |-----|--------|
 | `↑` / `k` · `↓` / `j` | Previous / next agent (wraps) |
 | `1`–`9` | Select agent by index |
+| `m` | Select model for agent |
 | `s` | Start |
 | `x` | Stop |
 | `X` | Stop all |
