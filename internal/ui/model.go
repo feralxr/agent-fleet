@@ -49,6 +49,10 @@ type keyMap struct {
 	LoadName key.Binding
 	HistUp   key.Binding
 	HistDown key.Binding
+	PgUp     key.Binding
+	PgDown   key.Binding
+	HalfUp   key.Binding
+	HalfDown key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -149,6 +153,22 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("down"),
 			key.WithHelp("↓", "next prompt (input)"),
 		),
+		PgUp: key.NewBinding(
+			key.WithKeys("pgup", "ctrl+b"),
+			key.WithHelp("pgup", "scroll up"),
+		),
+		PgDown: key.NewBinding(
+			key.WithKeys("pgdown", "ctrl+f"),
+			key.WithHelp("pgdown", "scroll down"),
+		),
+		HalfUp: key.NewBinding(
+			key.WithKeys("ctrl+u"),
+			key.WithHelp("ctrl+u", "half page up"),
+		),
+		HalfDown: key.NewBinding(
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "half page down"),
+		),
 	}
 }
 
@@ -160,8 +180,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.StopAll, k.Restart},
 		{k.Jump, k.Diff, k.Worktree, k.Fan, k.Cwd, k.Split},
-		{k.SaveName, k.LoadName, k.Reload, k.Copy, k.Clear},
-		{k.FocusIn, k.FocusOut, k.Enter, k.Help, k.Quit},
+		{k.PgUp, k.PgDown, k.HalfUp, k.HalfDown, k.Copy, k.Clear},
+		{k.SaveName, k.LoadName, k.Reload, k.FocusIn, k.Help, k.Quit},
 	}
 }
 
@@ -333,6 +353,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateInput(msg)
 		}
 		return m.updateNormal(msg)
+
+	case tea.MouseMsg:
+		if m.inputFocus {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.viewport.LineUp(3)
+		case tea.MouseButtonWheelDown:
+			m.viewport.LineDown(3)
+		}
+		return m, nil
 	}
 
 	return m, tea.Batch(cmds...)
@@ -362,21 +394,31 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Up):
+		if len(m.agents) == 0 {
+			return m, nil
+		}
 		if m.selected > 0 {
 			m.selected--
-			m.activeID = m.agents[m.selected].ID
-			m.outFP = "" // force pane redraw for new agent
-			m.refreshViewport()
+		} else {
+			m.selected = len(m.agents) - 1 // wrap
 		}
+		m.activeID = m.agents[m.selected].ID
+		m.outFP = ""
+		m.refreshViewport()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Down):
+		if len(m.agents) == 0 {
+			return m, nil
+		}
 		if m.selected < len(m.agents)-1 {
 			m.selected++
-			m.activeID = m.agents[m.selected].ID
-			m.outFP = ""
-			m.refreshViewport()
+		} else {
+			m.selected = 0 // wrap
 		}
+		m.activeID = m.agents[m.selected].ID
+		m.outFP = ""
+		m.refreshViewport()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Start):
@@ -506,6 +548,33 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.LoadName):
 		return m.loadNamedSessionCycle()
+
+	case key.Matches(msg, m.keys.PgUp):
+		m.viewport.HalfViewUp()
+		m.viewport.HalfViewUp()
+		return m, nil
+	case key.Matches(msg, m.keys.PgDown):
+		m.viewport.HalfViewDown()
+		m.viewport.HalfViewDown()
+		return m, nil
+	case key.Matches(msg, m.keys.HalfUp):
+		m.viewport.HalfViewUp()
+		return m, nil
+	case key.Matches(msg, m.keys.HalfDown):
+		m.viewport.HalfViewDown()
+		return m, nil
+
+	case msg.String() >= "1" && msg.String() <= "9":
+		// Jump to agent by number (1-indexed)
+		n := int(msg.String()[0] - '0')
+		if n >= 1 && n <= len(m.agents) {
+			m.selected = n - 1
+			m.activeID = m.agents[m.selected].ID
+			m.outFP = ""
+			m.statusMsg = fmt.Sprintf("selected %s", m.agents[m.selected].Name)
+			m.refreshViewport()
+		}
+		return m, nil
 
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode {
@@ -1254,11 +1323,13 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help  ·  j/k agents  ·  s start  ·  space jump  ·  i prompt  ·  g diff  ·  q quit")
+		helpView = subtleStyle.Render(" ? help · j/k or 1-9 · s start · space jump · i prompt · pgup/pgdn scroll · q quit")
 	}
 
+	sep := subtleStyle.Render(strings.Repeat("─", max(m.width, 1)))
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
+		sep,
 		body,
 		inputBox,
 		status,
