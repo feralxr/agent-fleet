@@ -1,8 +1,17 @@
 # Agent Fleet
 
 [![CI](https://github.com/feralxr/agent-fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/feralxr/agent-fleet/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/feralxr/agent-fleet)](https://github.com/feralxr/agent-fleet/releases/latest)
+[![Release](https://github.com/feralxr/agent-fleet/actions/workflows/release.yml/badge.svg)](https://github.com/feralxr/agent-fleet/actions/workflows/release.yml)
+[![GitHub release](https://img.shields.io/github/v/release/feralxr/agent-fleet)](https://github.com/feralxr/agent-fleet/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Agent Fleet — TUI cockpit for parallel coding agents" width="100%"/>
+</p>
+
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="Agent Fleet logo" width="72"/>
+</p>
 
 Lightweight **TUI cockpit** for running and switching between multiple coding agents — with isolation, fan-out, and review tools.
 
@@ -21,6 +30,20 @@ Add any CLI via `fleet.toml`.
 | **PTY** | Real PTY by default for interactive agent TUIs |
 | **Config** | `fleet.toml` + env overrides + custom profiles |
 | **UX** | Fast redraws, mouse scroll, 1–9 agent jump, prompt history |
+
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Agent Fleet architecture diagram" width="100%"/>
+</p>
+
+Fleet is a single terminal process. The TUI owns layout and input; the process manager owns agent lifecycles (PTY or pipes). Each agent can run in its own git worktree so parallel edits do not collide.
+
+## Workflow
+
+<p align="center">
+  <img src="docs/assets/flow.svg" alt="Agent Fleet workflow diagram" width="100%"/>
+</p>
 
 ## Install
 
@@ -144,7 +167,10 @@ make release
 fleet --version
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). CI tests every push; tags `v*` publish multi-arch binaries.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+- **CI** (`ci.yml`) — tests every push/PR to `main`
+- **Release** (`release.yml`) — runs only on tags `v*`, publishes multi-arch binaries
 
 ## Requirements
 

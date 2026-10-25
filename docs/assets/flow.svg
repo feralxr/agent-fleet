@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280" role="img" aria-label="Agent Fleet workflow">
+  <rect width="960" height="280" fill="#F7F5F2"/>
+  <text x="40" y="36" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="600" fill="#1A1523">Workflow</text>
+  <text x="40" y="56" font-family="ui-monospace, monospace" font-size="11" fill="#6B6570">PARALLEL AGENTS · ONE COCKPIT</text>
+
+  <!-- steps -->
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <rect x="40" y="100" width="140" height="88" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <text x="110" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">01</text>
+    <text x="110" y="154" text-anchor="middle" font-size="14" font-weight="600" fill="#1A1523">Select</text>
+    <text x="110" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">j/k · 1–9</text>
+
+    <path d="M180 144 H208" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+    <path d="M200 138 L210 144 L200 150" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+
+    <rect x="210" y="100" width="140" height="88" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <text x="280" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">02</text>
+    <text x="280" y="154" text-anchor="middle" font-size="14" font-weight="600" fill="#1A1523">Isolate</text>
+    <text x="280" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">w worktree</text>
+
+    <path d="M350 144 H378" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+    <path d="M370 138 L380 144 L370 150" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+
+    <rect x="380" y="100" width="140" height="88" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <text x="450" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">03</text>
+    <text x="450" y="154" text-anchor="middle" font-size="14" font-weight="600" fill="#1A1523">Run</text>
+    <text x="450" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">s start · PTY</text>
+
+    <path d="M520 144 H548" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+    <path d="M540 138 L550 144 L540 150" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+
+    <rect x="550" y="100" width="140" height="88" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <text x="620" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">04</text>
+    <text x="620" y="154" text-anchor="middle" font-size="14" font-weight="600" fill="#1A1523">Fan-out</text>
+    <text x="620" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">f · one prompt</text>
+
+    <path d="M690 144 H718" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+    <path d="M710 138 L720 144 L710 150" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+
+    <rect x="720" y="100" width="200" height="88" rx="12" fill="#F3EEFF" stroke="#6D28D9" stroke-width="1.5"/>
+    <text x="820" y="132" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">05</text>
+    <text x="820" y="154" text-anchor="middle" font-size="14" font-weight="600" fill="#1A1523">Review &amp; jump</text>
+    <text x="820" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">g diff · space attend</text>
+  </g>
+
+  <text x="40" y="240" font-family="ui-monospace, monospace" font-size="11" fill="#6B6570">Agents run in parallel. Fleet routes prompts, surfaces who needs you, and keeps diffs honest.</text>
+</svg>

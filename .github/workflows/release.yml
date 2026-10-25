@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build -o fleet ./cmd/fleet
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+      - name: Cross-compile
+        run: |
+          mkdir -p dist
+          VERSION=${GITHUB_REF_NAME}
+          build() {
+            local goos=$1 goarch=$2 name=$3
+            echo "→ dist/${name}"
+            GOOS=$goos GOARCH=$goarch go build -ldflags "-s -w -X main.version=$VERSION" -o "dist/${name}" ./cmd/fleet
+          }
+          build linux   amd64 fleet-linux-x64
+          build linux   arm64 fleet-linux-arm64
+          build darwin  amd64 fleet-darwin-x64
+          build darwin  arm64 fleet-darwin-arm64
+          build windows amd64 fleet-windows-x64.exe
+          build windows 386   fleet-windows-x86.exe
+          cd dist && sha256sum * > checksums.txt && ls -la
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520" role="img" aria-label="Agent Fleet architecture">
+  <rect width="960" height="520" fill="#F7F5F2"/>
+  <text x="40" y="40" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="600" fill="#1A1523">Architecture</text>
+  <text x="40" y="62" font-family="ui-monospace, monospace" font-size="11" fill="#6B6570">AGENT FLEET · PROCESS MODEL</text>
+
+  <!-- Fleet TUI box -->
+  <rect x="320" y="100" width="320" height="88" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+  <text x="480" y="136" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="600" fill="#1A1523">Agent Fleet TUI</text>
+  <text x="480" y="158" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#6B6570">bubbletea · lipgloss · viewport</text>
+  <text x="480" y="174" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#6D28D9">session.json · fleet.toml</text>
+
+  <!-- arrows down -->
+  <path d="M400 188 V220" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M480 188 V220" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M560 188 V220" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M397 214 L400 222 L403 214" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+  <path d="M477 214 L480 222 L483 214" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+  <path d="M557 214 L560 222 L563 214" fill="none" stroke="#1A1523" stroke-width="1.5"/>
+
+  <!-- Process manager -->
+  <rect x="280" y="224" width="400" height="64" rx="12" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+  <text x="480" y="252" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" fill="#1A1523">Process manager</text>
+  <text x="480" y="272" text-anchor="middle" font-family="ui-monospace, monospace" font-size="11" fill="#6B6570">PTY / pipes · start stop send · attention heuristics</text>
+
+  <!-- fan lines to agents -->
+  <path d="M360 288 V320" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M480 288 V320" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M600 288 V320" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M720 256 H780 V320" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+  <path d="M240 256 H180 V320" stroke="#1A1523" stroke-width="1.5" fill="none"/>
+
+  <!-- Agent cards -->
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <rect x="100" y="324" width="140" height="72" rx="10" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <circle cx="124" cy="348" r="5" fill="#4ADE80"/>
+    <text x="136" y="352" font-size="13" font-weight="600" fill="#1A1523">Claude</text>
+    <text x="116" y="374" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">worktree · pty</text>
+
+    <rect x="280" y="324" width="140" height="72" rx="10" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <circle cx="304" cy="348" r="5" fill="#38BDF8"/>
+    <text x="316" y="352" font-size="13" font-weight="600" fill="#1A1523">Cursor</text>
+    <text x="296" y="374" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">worktree · pty</text>
+
+    <rect x="460" y="324" width="140" height="72" rx="10" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <circle cx="484" cy="348" r="5" fill="#A78BFA"/>
+    <text x="496" y="352" font-size="13" font-weight="600" fill="#1A1523">OpenCode</text>
+    <text x="476" y="374" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">worktree · pty</text>
+
+    <rect x="640" y="324" width="140" height="72" rx="10" fill="#FFFFFF" stroke="#1A1523" stroke-width="1.5"/>
+    <circle cx="664" cy="348" r="5" fill="#FBBF24"/>
+    <text x="676" y="352" font-size="13" font-weight="600" fill="#1A1523">Grok</text>
+    <text x="656" y="374" font-family="ui-monospace, monospace" font-size="10" fill="#6B6570">worktree · pty</text>
+
+    <rect x="820" y="324" width="100" height="72" rx="10" fill="#F3EEFF" stroke="#6D28D9" stroke-width="1.5"/>
+    <text x="870" y="356" text-anchor="middle" font-size="12" font-weight="600" fill="#6D28D9">+ custom</text>
+    <text x="870" y="376" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#6D28D9">fleet.toml</text>
+  </g>
+
+  <!-- repo / git bar -->
+  <rect x="100" y="432" width="760" height="48" rx="10" fill="#1A1523"/>
+  <text x="480" y="460" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#FAFAFA">git repo  ·  .fleet/worktrees/*  ·  diff --stat  ·  shared or isolated cwd</text>
+</svg>
