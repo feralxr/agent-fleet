@@ -1,15 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Agent Fleet">
-  <rect width="128" height="128" rx="28" fill="#0B0B0F"/>
-  <rect x="8" y="8" width="112" height="112" rx="22" fill="#12101A" stroke="#3B0764" stroke-width="2"/>
-  <!-- three agent nodes -->
-  <circle cx="40" cy="48" r="8" fill="#4ADE80"/>
-  <circle cx="64" cy="48" r="8" fill="#A78BFA"/>
-  <circle cx="88" cy="48" r="8" fill="#38BDF8"/>
-  <!-- links into hub -->
-  <path d="M40 56 V72 H64 V80" fill="none" stroke="#52525B" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M64 56 V80" fill="none" stroke="#A78BFA" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M88 56 V72 H64 V80" fill="none" stroke="#52525B" stroke-width="2.5" stroke-linecap="round"/>
-  <!-- fleet hub -->
-  <rect x="48" y="80" width="32" height="18" rx="6" fill="#6D28D9"/>
-  <text x="64" y="93" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" font-weight="600" fill="#FAFAFA">fleet</text>
+  <!--
+    Mark: three parallel process lanes on a hard field.
+    Middle lane is the active agent (violet). No network nodes, no wordmark.
+  -->
+  <rect width="128" height="128" rx="24" fill="#0A0A0B"/>
+  <!-- lanes -->
+  <rect x="28" y="32" width="14" height="64" rx="3" fill="#3F3F46"/>
+  <rect x="57" y="24" width="14" height="80" rx="3" fill="#7C3AED"/>
+  <rect x="86" y="40" width="14" height="48" rx="3" fill="#3F3F46"/>
 </svg>

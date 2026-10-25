@@ -6,12 +6,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Agent Fleet — TUI cockpit for parallel coding agents" width="100%"/>
+  <img src="docs/assets/logo.svg" alt="Agent Fleet" width="96"/>
 </p>
 
-<p align="center">
-  <img src="docs/assets/logo.svg" alt="Agent Fleet logo" width="72"/>
-</p>
+<p align="center"><strong>Agent Fleet</strong> — TUI cockpit for parallel coding agents</p>
 
 Lightweight **TUI cockpit** for running and switching between multiple coding agents — with isolation, fan-out, and review tools.
 
