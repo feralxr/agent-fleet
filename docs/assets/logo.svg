@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Agent Fleet">
   <!--
-    Icon paths from Lucide "columns-3" (ISC License)
+    Icon paths from Lucide "panels-top-left" (ISC License)
     https://github.com/lucide-icons/lucide
     Copyright (c) 2020–present Lucide Contributors
   -->
   <rect width="128" height="128" rx="28" fill="#0A0A0B"/>
   <g fill="none" stroke="#A78BFA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" transform="translate(16,16) scale(4)">
     <rect width="18" height="18" x="3" y="3" rx="2"/>
-    <path d="M9 3v18"/>
-    <path d="M15 3v18"/>
+    <path d="M3 9h18"/>
+    <path d="M9 21V9"/>
   </g>
 </svg>
