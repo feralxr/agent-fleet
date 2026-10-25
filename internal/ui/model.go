@@ -236,11 +236,17 @@ func NewModel() Model {
 	}
 
 	ta := textarea.New()
-	ta.Placeholder = "Press i then type a prompt — Enter to send…"
+	ta.Placeholder = "i  focus  ·  enter  send  ·  esc  cancel"
 	ta.CharLimit = 4000
-	ta.SetHeight(3)
+	ta.SetHeight(2)
 	ta.ShowLineNumbers = false
-	ta.Focus()
+	ta.Prompt = ""
+	ta.BlurredStyle.Base = lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A"))
+	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B"))
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4F4F5"))
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("#1E1033"))
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
+	ta.Blur()
 
 	vp := viewport.New(80, 20)
 	vp.SetContent("Welcome to Agent Fleet\n\n  j/k  select agent\n  s    start\n  i    focus prompt\n  ?    help\n")
@@ -548,7 +554,8 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.histIdx = -1
 		m.input.Blur()
 		m.input.Reset()
-		m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
+		m.input.Placeholder = "i  focus  ·  enter  send  ·  esc  cancel"
+		m.layout()
 		m.statusMsg = "cancelled"
 		return m, nil
 
@@ -878,20 +885,28 @@ func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) sidebarWidth() int {
+	if m.width < 80 {
+		return 20
+	}
+	if m.width < 100 {
+		return 24
+	}
+	return 28
+}
+
 func (m *Model) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
 
-	leftWidth := 26
-	if m.width < 90 {
-		leftWidth = 22
-	}
-	if m.width < 70 {
-		leftWidth = 18
-	}
+	leftWidth := m.sidebarWidth()
 
-	chrome := 9
+	// header(1) + body headers(1) + input(~3) + status(1) + help(1) + borders
+	chrome := 10
+	if m.inputFocus || m.pathMode || m.nameMode || m.fanMode {
+		chrome = 11
+	}
 	contentHeight := m.height - chrome
 	if contentHeight < 6 {
 		contentHeight = 6
@@ -915,8 +930,12 @@ func (m *Model) layout() {
 		m.viewport2.Height = contentHeight
 	}
 
-	m.input.SetWidth(m.width - 2)
-	m.input.SetHeight(3)
+	m.input.SetWidth(max(m.width-4, 20))
+	if m.inputFocus || m.pathMode || m.nameMode || m.fanMode {
+		m.input.SetHeight(3)
+	} else {
+		m.input.SetHeight(2)
+	}
 
 	wrap := m.viewport.Width - 4
 	if wrap < 20 {
@@ -1115,13 +1134,7 @@ func (m Model) View() string {
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Center, title, " ", mode, chip)
 
-	leftWidth := 28
-	if m.width < 100 {
-		leftWidth = 24
-	}
-	if m.width < 80 {
-		leftWidth = 20
-	}
+	leftWidth := m.sidebarWidth()
 	rightWidth := m.width - leftWidth - 1
 	if rightWidth < 20 {
 		rightWidth = 20
@@ -1136,6 +1149,16 @@ func (m Model) View() string {
 	}
 	if p := m.manager.Get(m.activeID); p != nil {
 		outTitle += " · " + p.Name
+	}
+	// Scroll position (built-in viewport percent)
+	if m.viewport.TotalLineCount() > m.viewport.Height {
+		if m.viewport.AtBottom() {
+			outTitle += " · end"
+		} else if m.viewport.AtTop() {
+			outTitle += " · top"
+		} else {
+			outTitle += fmt.Sprintf(" · %d%%", int(m.viewport.ScrollPercent()*100))
+		}
 	}
 
 	var rightPane string
@@ -1202,9 +1225,23 @@ func (m Model) View() string {
 	} else {
 		runBadge = subtleStyle.Render(fmt.Sprintf("%d running", runn))
 	}
-	statusLeft := " " + m.statusMsg
-	if lipgloss.Width(statusLeft) > 50 {
-		statusLeft = statusLeft[:47] + "…"
+	msgStyle := subtleStyle
+	sm := strings.ToLower(m.statusMsg)
+	switch {
+	case strings.Contains(sm, "fail") || strings.Contains(sm, "error") || strings.Contains(sm, "not found"):
+		msgStyle = statusErr
+	case strings.Contains(sm, "started") || strings.Contains(sm, "sent") || strings.Contains(sm, "saved") || strings.Contains(sm, "ready") || strings.Contains(sm, "copied"):
+		msgStyle = statusRun
+	case strings.Contains(sm, "need") || strings.Contains(sm, "fan") || strings.Contains(sm, "jump"):
+		msgStyle = statusWait
+	}
+	statusLeft := " " + msgStyle.Render(m.statusMsg)
+	if lipgloss.Width(statusLeft) > 52 {
+		// strip styles for length check is hard; keep raw truncate on original
+		raw := " " + m.statusMsg
+		if len(raw) > 48 {
+			statusLeft = msgStyle.Render(raw[:45] + "…")
+		}
 	}
 	statusRight := fmt.Sprintf("%s  %s  %s ", runBadge, subtleStyle.Render(cwd), subtleStyle.Render(time.Now().Format("15:04")))
 	gap := m.width - lipgloss.Width(statusLeft) - lipgloss.Width(statusRight)
