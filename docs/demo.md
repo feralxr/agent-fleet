@@ -1,29 +1,32 @@
 # Agent Fleet — demo walkthrough
 
 ```text
-┌ Agent Fleet ─────────────────────────────────────────────┐
-│ AGENTS              │  [fleet] started Claude (pty)      │
-│ ▌ ● Claude Code     │  › refactor auth to JWT            │
-│     wt:claude · run │  ... agent output ...              │
-│   ◐ Cursor          │                                    │
+┌ ✦ Agent Fleet ── input ── ● Claude Code ─────────────────┐
+│ AGENTS              │ OUTPUT · Claude Code · end         │
+│ ▌ ● 1 Claude Code   │ ── Claude Code · up 3m12s · 40 ──  │
+│     wt:claude · 3m  │ › refactor auth to JWT             │
+│   ◉ 2 Cursor        │ … agent stream …                   │
 │     needs you       │                                    │
-│   ● OpenCode        │                                    │
-│     idle · pty      │                                    │
+│   ○ 3 OpenCode      │                                    │
+│     opencode · pty  │                                    │
+│                     │                                    │
+│   ● run  ◉ wait     │                                    │
+│   1-9 select        │                                    │
 ├─────────────────────┴────────────────────────────────────┤
-│ Type a prompt and press Enter…                           │
+│ input  Type a prompt — Enter to send…                    │
 ├──────────────────────────────────────────────────────────┤
-│ prompt sent  ·  2 run · 1 need you  ·  Claude  ·  ~/proj │
-│ ? help · space jump · g diff · S save · L load · q quit  │
+│ started Claude          2 run · 1 need you  ~/proj  15:04│
+│ ? help · j/k or 1-9 · s start · space jump · i prompt    │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ## Typical flow
 
-1. `cd` into a git repo, run `fleet`
-2. Select Claude → `w` (worktree) → `s` (start)
-3. Select Cursor → `w` → `s`
-4. `f` → type task → Enter (fan-out to both)
-5. `space` jumps to whoever asks for approval
-6. `g` reviews `git diff --stat` per agent
-7. `S` saves a named session; `L` cycles restored layouts
-8. In input focus, `↑` / `↓` walk prompt history
+1. `cd` into a git repo → run `fleet`
+2. Select agent (`j/k` or `1-9`) → `w` worktree → `s` start
+3. `f` → type task → Enter (fan-out)
+4. `space` jumps to whoever needs approval
+5. `g` reviews `git diff --stat`
+6. Mouse wheel or `pgup`/`pgdn` to scroll output
+7. `S` saves a named session; `L` restores
+8. In input focus, `↑`/`↓` walk prompt history

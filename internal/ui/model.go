@@ -1471,4 +1471,3 @@ var (
 	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
 	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1E1033"))
 )
-

@@ -1,4 +1,4 @@
-.PHONY: build test install clean release example
+.PHONY: build test fmt vet install clean release example
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -7,6 +7,12 @@ build:
 
 test:
 	go test ./...
+
+fmt:
+	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
+
+vet:
+	go vet ./...
 
 install:
 	go install -ldflags "-X main.version=$(VERSION)" ./cmd/fleet

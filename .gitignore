@@ -1,20 +1,21 @@
 # Binaries
 /fleet
+/dist/
 *.exe
 *.dll
 *.so
 *.dylib
-
-# Test binary
 *.test
 
-# Output of go coverage
+# Coverage / profiling
 *.out
+coverage.html
+coverage.txt
 
 # Dependency directories
 vendor/
 
-# IDE
+# IDE / editor
 .idea/
 .vscode/
 *.swp
@@ -27,7 +28,11 @@ Thumbs.db
 
 # Local config / secrets (never commit)
 .env
+.env.*
 *.pem
 *.key
 credentials*
 token*
+
+# Local worktrees if testing in-repo
+.fleet/

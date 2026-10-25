@@ -18,7 +18,7 @@ import (
 type Status string
 
 const (
-	StatusIdle    Status ="idle"
+	StatusIdle    Status = "idle"
 	StatusRunning Status = "running"
 	StatusWaiting Status = "waiting"
 	StatusError   Status = "error"
@@ -46,8 +46,8 @@ type AgentProcess struct {
 	cancel chan struct{}
 	done   chan struct{}
 
-	Output  []string
-	mu      sync.Mutex
+	Output     []string
+	mu         sync.Mutex
 	started    time.Time
 	lastActive time.Time
 	lastErr    string
@@ -606,7 +606,6 @@ func (m *Manager) StopAll() int {
 	}
 	return n
 }
-
 
 func looksLikePrompt(line string) bool {
 	s := strings.TrimSpace(strings.ToLower(line))

@@ -40,20 +40,20 @@ type FleetFile struct {
 
 // Session holds persisted UI state between runs.
 type Session struct {
-	LastCwd     string            `json:"last_cwd"`
-	LastAgentID AgentID           `json:"last_agent_id"`
-	CustomCmds  map[string]string `json:"custom_cmds,omitempty"`
-	Worktrees   map[string]string `json:"worktrees,omitempty"`
-	PromptHist  []string          `json:"prompt_history,omitempty"`
+	LastCwd     string                  `json:"last_cwd"`
+	LastAgentID AgentID                 `json:"last_agent_id"`
+	CustomCmds  map[string]string       `json:"custom_cmds,omitempty"`
+	Worktrees   map[string]string       `json:"worktrees,omitempty"`
+	PromptHist  []string                `json:"prompt_history,omitempty"`
 	Named       map[string]NamedSession `json:"named_sessions,omitempty"`
 }
 
 // NamedSession is a saved layout the user can restore later.
 type NamedSession struct {
-	Cwd         string            `json:"cwd"`
-	ActiveID    AgentID       `json:"active_id"`
-	Worktrees   map[string]string `json:"worktrees,omitempty"`
-	PromptHist  []string          `json:"prompt_history,omitempty"`
+	Cwd        string            `json:"cwd"`
+	ActiveID   AgentID           `json:"active_id"`
+	Worktrees  map[string]string `json:"worktrees,omitempty"`
+	PromptHist []string          `json:"prompt_history,omitempty"`
 }
 
 // LoadFleetFile reads fleet.toml from search paths.
