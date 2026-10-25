@@ -437,6 +437,21 @@ func (p *AgentProcess) SnapshotOutput() []string {
 	return out
 }
 
+// OutputFingerprint is a cheap change detector (no full buffer copy).
+func (p *AgentProcess) OutputFingerprint() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := len(p.Output)
+	if n == 0 {
+		return string(p.Status)
+	}
+	last := p.Output[n-1]
+	if len(last) > 64 {
+		last = last[len(last)-64:]
+	}
+	return fmt.Sprintf("%s|%d|%s", p.Status, n, last)
+}
+
 func (p *AgentProcess) NeedsAttention() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

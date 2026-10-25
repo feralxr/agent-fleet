@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	tickInterval = 200 * time.Millisecond
+	tickInterval = 500 * time.Millisecond
 )
 
 type keyMap struct {
@@ -193,6 +193,16 @@ type Model struct {
 	ready        bool
 	lastContent  string
 	lastContent2 string
+	outFP        string // fingerprint of active agent output
+	outFP2       string
+	diffCache    map[string]diffCacheEntry
+	diffCacheAt  time.Time
+}
+
+type diffCacheEntry struct {
+	short string
+	full  string
+	at    time.Time
 }
 
 // NewModel creates the initial UI model.
@@ -264,6 +274,7 @@ func NewModel() Model {
 		nameMode:   false,
 		histIdx:    -1,
 		statusMsg:  "Ready",
+		diffCache:  make(map[string]diffCacheEntry),
 	}
 	return m
 }
@@ -302,7 +313,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.agents = m.manager.List()
-		m.refreshViewport()
+		// At most one git status refresh per tick (never from View)
+		m.refreshDiffCacheLazy()
+		// Only re-render panes when agent output actually changed
+		if m.outputChanged(m.activeID, &m.outFP) || (m.split && m.outputChanged(m.secondAgentID(), &m.outFP2)) {
+			m.refreshViewport()
+		}
 		cmds = append(cmds, tickCmd())
 		return m, tea.Batch(cmds...)
 
@@ -343,6 +359,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.selected > 0 {
 			m.selected--
 			m.activeID = m.agents[m.selected].ID
+			m.outFP = "" // force pane redraw for new agent
 			m.refreshViewport()
 		}
 		return m, nil
@@ -351,6 +368,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.selected < len(m.agents)-1 {
 			m.selected++
 			m.activeID = m.agents[m.selected].ID
+			m.outFP = ""
 			m.refreshViewport()
 		}
 		return m, nil
@@ -444,9 +462,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Diff):
 		m.showDiff = !m.showDiff
-		m.lastContent = "" // force redraw
+		m.lastContent = ""
 		m.lastContent2 = ""
+		m.outFP = ""
 		if m.showDiff {
+			m.refreshDiffCache(m.manager.EffectiveCwd(m.activeID))
 			m.statusMsg = "diff view on — press g to return"
 		} else {
 			m.statusMsg = "diff view off"
@@ -749,6 +769,86 @@ func (m Model) loadNamedSessionCycle() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) outputChanged(id config.AgentID, fp *string) bool {
+	p := m.manager.Get(id)
+	if p == nil {
+		if *fp != "" {
+			*fp = ""
+			return true
+		}
+		return false
+	}
+	next := p.OutputFingerprint()
+	if next != *fp {
+		*fp = next
+		return true
+	}
+	return false
+}
+
+func (m Model) secondAgentID() config.AgentID {
+	if len(m.agents) < 2 {
+		return ""
+	}
+	secIdx := m.selected + 1
+	if secIdx >= len(m.agents) {
+		secIdx = 0
+	}
+	return m.agents[secIdx].ID
+}
+
+const diffCacheTTL = 3 * time.Second
+
+// cachedDiffShort is View-safe: never shells out to git.
+func (m *Model) cachedDiffShort(dir string) string {
+	if dir == "" || m.diffCache == nil {
+		return ""
+	}
+	if e, ok := m.diffCache[dir]; ok {
+		return e.short
+	}
+	return ""
+}
+
+// cachedDiffFull returns a cached full stat; refreshes if missing/stale (only call from key handlers / tick, not View for many agents).
+func (m *Model) cachedDiffFull(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if e, ok := m.diffCache[dir]; ok && e.full != "" && time.Since(e.at) < diffCacheTTL {
+		return e.full
+	}
+	m.refreshDiffCache(dir)
+	return m.diffCache[dir].full
+}
+
+func (m *Model) refreshDiffCache(dir string) {
+	if dir == "" {
+		return
+	}
+	if m.diffCache == nil {
+		m.diffCache = make(map[string]diffCacheEntry)
+	}
+	short := gitutil.DiffShortOneLiner(dir)
+	full := gitutil.DiffStat(dir)
+	m.diffCache[dir] = diffCacheEntry{short: short, full: full, at: time.Now()}
+}
+
+// refreshDiffCacheLazy updates at most one stale path per tick.
+func (m *Model) refreshDiffCacheLazy() {
+	for _, a := range m.agents {
+		dir := m.manager.EffectiveCwd(a.ID)
+		if dir == "" {
+			continue
+		}
+		e, ok := m.diffCache[dir]
+		if !ok || time.Since(e.at) >= diffCacheTTL {
+			m.refreshDiffCache(dir)
+			return // one git batch per tick max
+		}
+	}
+}
+
 func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
 	cwd := m.manager.Cwd()
 	if !gitutil.IsRepo(cwd) {
@@ -865,7 +965,7 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 
 	if m.showDiff {
 		dir := m.manager.EffectiveCwd(id)
-		stat := gitutil.DiffStat(dir)
+		stat := m.cachedDiffFull(dir)
 		var content string
 		if stat == "" {
 			content = fmt.Sprintf("# %s — git diff\n\n`%s`\n\n_Working tree clean (or not a git repo)._\n", p.Name, dir)
@@ -939,12 +1039,7 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 		}
 	}
 	content := b.String()
-	// Markdown only for modest buffers (keeps streaming fast)
-	if len(lines) < 300 && m.renderer != nil {
-		if rendered, err := m.renderer.Render(content); err == nil {
-			content = rendered
-		}
-	}
+	// No Glamour on live streams — ANSI/markdown render is too expensive for 500ms ticks.
 	if content != *last {
 		*last = content
 		vp.SetContent(content)
@@ -1156,9 +1251,9 @@ func (m Model) renderAgentList() string {
 				st += " · pty"
 			}
 		}
-		// Append one-line diff summary when dirty
+		// Cached dirty summary (never block UI on git)
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
-			if d := gitutil.DiffShortOneLiner(dir); d != "" && d != "clean" {
+			if d := m.cachedDiffShort(dir); d != "" && d != "clean" {
 				if st != "" {
 					st += " · "
 				}
