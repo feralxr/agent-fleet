@@ -236,14 +236,14 @@ func NewModel() Model {
 	}
 
 	ta := textarea.New()
-	ta.Placeholder = "Type a prompt and press Enter to send to the active agent…"
+	ta.Placeholder = "Press i then type a prompt — Enter to send…"
 	ta.CharLimit = 4000
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
 	ta.Focus()
 
 	vp := viewport.New(80, 20)
-	vp.SetContent("Welcome to Agent Fleet\n\nSelect an agent on the left and press `s` to start it.")
+	vp.SetContent("Welcome to Agent Fleet\n\n  j/k  select agent\n  s    start\n  i    focus prompt\n  ?    help\n")
 	vp2 := viewport.New(40, 20)
 	vp2.SetContent("")
 
@@ -1074,7 +1074,7 @@ func (m Model) View() string {
 		return "\n  Loading Agent Fleet…"
 	}
 
-	title := titleStyle.Render(" Agent Fleet ")
+	title := titleStyle.Render(" ✦ Agent Fleet ")
 	var badges []string
 	if m.split {
 		badges = append(badges, "split")
@@ -1091,23 +1091,36 @@ func (m Model) View() string {
 	if m.nameMode {
 		badges = append(badges, "save")
 	}
+	if m.inputFocus && !m.pathMode && !m.nameMode && !m.fanMode {
+		badges = append(badges, "input")
+	}
 	mode := ""
 	if len(badges) > 0 {
-		mode = subtleStyle.Render("  " + strings.Join(badges, " · "))
+		mode = badgeStyle.Render(" " + strings.Join(badges, " · ") + " ")
 	}
-	// Active agent chip
 	chip := ""
 	if p := m.manager.Get(m.activeID); p != nil {
-		chip = subtleStyle.Render(fmt.Sprintf("  %s [%s]", p.Name, p.Status))
+		st := statusIdle
+		switch p.Status {
+		case process.StatusRunning:
+			st = statusRun
+		case process.StatusWaiting:
+			st = statusWait
+		case process.StatusError:
+			st = statusErr
+		case process.StatusMissing:
+			st = statusMiss
+		}
+		chip = " " + st.Render("●") + subtleStyle.Render(" "+p.Name)
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Center, title, mode, chip)
+	header := lipgloss.JoinHorizontal(lipgloss.Center, title, " ", mode, chip)
 
-	leftWidth := 26
-	if m.width < 90 {
-		leftWidth = 22
+	leftWidth := 28
+	if m.width < 100 {
+		leftWidth = 24
 	}
-	if m.width < 70 {
-		leftWidth = 18
+	if m.width < 80 {
+		leftWidth = 20
 	}
 	rightWidth := m.width - leftWidth - 1
 	if rightWidth < 20 {
@@ -1115,67 +1128,101 @@ func (m Model) View() string {
 	}
 
 	left := m.renderAgentList()
-	leftPane := leftStyle.Width(leftWidth).Height(m.viewport.Height).Render(left)
+	leftPane := leftStyle.Width(leftWidth).Height(m.viewport.Height + 1).Render(left)
+
+	outTitle := "OUTPUT"
+	if m.showDiff {
+		outTitle = "DIFF"
+	}
+	if p := m.manager.Get(m.activeID); p != nil {
+		outTitle += " · " + p.Name
+	}
 
 	var rightPane string
 	if m.split {
 		half := rightWidth / 2
+		secName := "…"
+		if id := m.secondAgentID(); id != "" {
+			if p := m.manager.Get(id); p != nil {
+				secName = p.Name
+			}
+		}
+		actName := string(m.activeID)
+		if p := m.manager.Get(m.activeID); p != nil {
+			actName = p.Name
+		}
+		h1 := sectionStyle.Width(max(half-2, 8)).Render(" " + actName + " ")
+		h2 := sectionStyle.Width(max(rightWidth-half-2, 8)).Render(" " + secName + " ")
 		p1 := rightStyle.Width(half).Height(m.viewport.Height).Render(m.viewport.View())
 		p2 := rightStyle.Width(rightWidth - half).Height(m.viewport.Height).Render(m.viewport2.View())
-		rightPane = lipgloss.JoinHorizontal(lipgloss.Top, p1, p2)
+		rightPane = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.JoinVertical(lipgloss.Left, h1, p1),
+			lipgloss.JoinVertical(lipgloss.Left, h2, p2),
+		)
 	} else {
-		rightPane = rightStyle.Width(rightWidth).Height(m.viewport.Height).Render(m.viewport.View())
+		h := sectionStyle.Width(max(rightWidth-2, 8)).Render(" " + outTitle + " ")
+		pane := rightStyle.Width(rightWidth).Height(m.viewport.Height).Render(m.viewport.View())
+		rightPane = lipgloss.JoinVertical(lipgloss.Left, h, pane)
 	}
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	inputBorderColor := lipgloss.Color("#374151")
-	if m.inputFocus || m.pathMode {
-		inputBorderColor = lipgloss.Color("#7C3AED")
+	inputBorderColor := lipgloss.Color("#3F3F46")
+	inputLabel := subtleStyle.Render(" prompt ")
+	switch {
+	case m.fanMode:
+		inputBorderColor = lipgloss.Color("#38BDF8")
+		inputLabel = statusWait.Render(" fan-out ")
+	case m.pathMode:
+		inputBorderColor = lipgloss.Color("#FBBF24")
+		inputLabel = statusMiss.Render(" cwd ")
+	case m.nameMode:
+		inputBorderColor = lipgloss.Color("#A78BFA")
+		inputLabel = selectedStyle.Render(" session ")
+	case m.inputFocus:
+		inputBorderColor = lipgloss.Color("#8B5CF6")
+		inputLabel = selectedStyle.Render(" input ")
 	}
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(inputBorderColor).
 		Padding(0, 1).
 		Width(m.width - 2).
-		Render(m.input.View())
+		Render(inputLabel + m.input.View())
 
 	cwd := m.manager.Cwd()
-	if len(cwd) > 40 {
-		cwd = "…" + cwd[len(cwd)-37:]
-	}
-	activeName := ""
-	if p := m.manager.Get(m.activeID); p != nil {
-		activeName = p.Name
+	if len(cwd) > 36 {
+		cwd = "…" + cwd[len(cwd)-33:]
 	}
 	attn := m.manager.AttentionCount()
 	runn := m.manager.RunningCount()
-	badge := fmt.Sprintf("%d run", runn)
+	var runBadge string
 	if attn > 0 {
-		badge += fmt.Sprintf(" · %d need you", attn)
+		runBadge = statusWait.Render(fmt.Sprintf("%d run · %d need you", runn, attn))
+	} else {
+		runBadge = subtleStyle.Render(fmt.Sprintf("%d running", runn))
 	}
-	statusLeft := fmt.Sprintf(" %s", m.statusMsg)
-	statusRight := fmt.Sprintf("%s  ·  %s  ·  %s  ·  %s ", badge, activeName, cwd, time.Now().Format("15:04:05"))
+	statusLeft := " " + m.statusMsg
+	if lipgloss.Width(statusLeft) > 50 {
+		statusLeft = statusLeft[:47] + "…"
+	}
+	statusRight := fmt.Sprintf("%s  %s  %s ", runBadge, subtleStyle.Render(cwd), subtleStyle.Render(time.Now().Format("15:04")))
 	gap := m.width - lipgloss.Width(statusLeft) - lipgloss.Width(statusRight)
 	if gap < 1 {
 		gap = 1
 	}
-	status := statusStyle.Width(m.width).Render(
-		statusLeft + strings.Repeat(" ", gap) + statusRight,
-	)
+	status := statusStyle.Width(m.width).Render(statusLeft + strings.Repeat(" ", gap) + statusRight)
 
 	var helpView string
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · space · g diff · S/L sessions · ↑↓ history · s start · w worktree · f fan · q quit")
+		helpView = subtleStyle.Render(" ? help  ·  j/k agents  ·  s start  ·  space jump  ·  i prompt  ·  g diff  ·  q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		"",
 		body,
-		"",
 		inputBox,
 		status,
 		helpView,
@@ -1184,7 +1231,7 @@ func (m Model) View() string {
 
 func (m Model) renderAgentList() string {
 	var b strings.Builder
-	b.WriteString(sectionStyle.Render("AGENTS") + "\n")
+	b.WriteString(sectionStyle.Render(" AGENTS ") + "\n")
 
 	for i, a := range m.agents {
 		selected := i == m.selected
@@ -1194,21 +1241,25 @@ func (m Model) renderAgentList() string {
 		case process.StatusRunning:
 			statusDot = statusRun.Render("●")
 		case process.StatusWaiting:
-			statusDot = statusWait.Render("◐")
+			statusDot = statusWait.Render("◉")
 		case process.StatusError:
-			statusDot = statusErr.Render("●")
+			statusDot = statusErr.Render("✗")
 		case process.StatusMissing:
-			statusDot = statusMiss.Render("●")
+			statusDot = statusMiss.Render("○")
+		case process.StatusStopped:
+			statusDot = statusIdle.Render("○")
 		default:
-			statusDot = statusIdle.Render("●")
+			statusDot = statusIdle.Render("○")
 		}
 
 		name := a.Name
+		if len(name) > 16 {
+			name = name[:14] + "…"
+		}
 		if selected {
-			name = selectedStyle.Render(a.Name)
+			name = selectedStyle.Render(name)
 		}
 
-		// Active row gets a left bar + background feel
 		prefix := "  "
 		if selected {
 			prefix = activeBar.Render("▌") + " "
@@ -1242,8 +1293,6 @@ func (m Model) renderAgentList() string {
 		} else if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
 			if u := process.FormatUptime(a.Uptime()); u != "" {
 				st = u
-			} else {
-				st = string(a.Status)
 			}
 		} else if a.Available && a.CmdPath != "" && a.Status == process.StatusIdle {
 			st = a.ShortPath()
@@ -1251,7 +1300,6 @@ func (m Model) renderAgentList() string {
 				st += " · pty"
 			}
 		}
-		// Cached dirty summary (never block UI on git)
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
 			if d := m.cachedDiffShort(dir); d != "" && d != "clean" {
 				if st != "" {
@@ -1267,26 +1315,33 @@ func (m Model) renderAgentList() string {
 	return b.String()
 }
 
-// Styles
+// Styles — dark violet cockpit palette
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#7C3AED")).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#6D28D9")).
 			Padding(0, 1)
 
-	subtleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
+	badgeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E9D5FF")).
+			Background(lipgloss.Color("#3B0764")).
+			Padding(0, 1)
 
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E9D5FF"))
+	subtleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A"))
+
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F5F3FF"))
 
 	sectionStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#A78BFA")).
+			Background(lipgloss.Color("#1C1528")).
+			Padding(0, 1).
 			MarginBottom(1)
 
 	leftStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, true, false, false).
-			BorderForeground(lipgloss.Color("#27272A")).
+			BorderForeground(lipgloss.Color("#3F3F46")).
 			Padding(0, 1, 0, 0)
 
 	rightStyle = lipgloss.NewStyle().
@@ -1294,10 +1349,10 @@ var (
 
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A1A1AA")).
-			Background(lipgloss.Color("#18181B"))
+			Background(lipgloss.Color("#09090B"))
 
 	statusIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B"))
-	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
+	statusRun  = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ADE80"))
 	statusWait = lipgloss.NewStyle().Foreground(lipgloss.Color("#38BDF8"))
 	statusErr  = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
 	statusMiss = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24"))
@@ -1305,6 +1360,7 @@ var (
 	fleetLineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B")).Italic(true)
 	promptLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#C4B5FD")).Bold(true)
 
-	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
-	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1E1B2E"))
+	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
+	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1E1033"))
 )
+
