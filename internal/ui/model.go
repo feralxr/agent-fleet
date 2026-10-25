@@ -269,7 +269,7 @@ func NewModel() Model {
 	ta.Blur()
 
 	vp := viewport.New(80, 20)
-	vp.SetContent("Welcome to Agent Fleet\n\n  j/k  select agent\n  s    start\n  i    focus prompt\n  ?    help\n")
+	vp.SetContent("agent fleet\n\n  j/k or 1-9   select\n  s            start\n  i            prompt\n  space        jump to wait\n  ?            help\n")
 	vp2 := viewport.New(40, 20)
 	vp2.SetContent("")
 
@@ -1076,30 +1076,30 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 		if p.UsePTY {
 			mode = "pty"
 		}
-		msg := fmt.Sprintf("# %s\n\n**Status:** `%s`  ·  **Mode:** `%s`\n\n**Path:** `%s`\n",
-			p.Name, p.Status, mode, dir)
+		var b strings.Builder
+		b.WriteString(selectedStyle.Render(p.Name) + "\n")
+		b.WriteString(subtleStyle.Render(fmt.Sprintf("%s  ·  %s  ·  %s", p.Status, mode, dir)) + "\n\n")
 		switch p.Status {
 		case process.StatusMissing:
-			msg += fmt.Sprintf("\nBinary **not found** on `$PATH`: `%s`\n\n"+
-				"Fix options:\n"+
-				"1. Install the CLI and ensure it is on `$PATH`\n"+
-				"2. Set env `FLEET_%s_CMD` to the full binary path\n"+
-				"3. Add a custom entry in `fleet.toml` and press `ctrl+r`\n",
-				p.CmdPath, strings.ToUpper(strings.ReplaceAll(string(p.ID), "-", "_")))
+			b.WriteString(statusMiss.Render("binary not found") + "\n")
+			b.WriteString(subtleStyle.Render(p.CmdPath) + "\n\n")
+			b.WriteString(subtleStyle.Render("install the CLI, set FLEET_"+strings.ToUpper(strings.ReplaceAll(string(p.ID), "-", "_"))+"_CMD,") + "\n")
+			b.WriteString(subtleStyle.Render("or add it in fleet.toml and press ctrl+r") + "\n")
 		case process.StatusError:
 			err := p.LastError()
 			if err == "" {
 				err = "unknown error"
 			}
-			msg += fmt.Sprintf("\nLast error: `%s`\n\nPress **r** to restart or **s** to start again.\n", err)
+			b.WriteString(statusErr.Render("error") + "  " + subtleStyle.Render(err) + "\n\n")
+			b.WriteString(subtleStyle.Render("r  restart   s  start") + "\n")
 		case process.StatusStopped:
-			msg += "\nAgent stopped. Press **s** to start again, or **r** to restart.\n"
+			b.WriteString(subtleStyle.Render("stopped — press s to start") + "\n")
 		default:
-			msg += "\nPress **s** to start this agent.\n\n" +
-				"| Key | Action |\n|-----|--------|\n" +
-				"| `s` | Start |\n| `w` | Create git worktree |\n| `i` | Focus prompt |\n| `g` | Diff view |\n| `?` | Full help |\n"
+			b.WriteString(subtleStyle.Render("s  start     w  worktree") + "\n")
+			b.WriteString(subtleStyle.Render("i  prompt    g  diff") + "\n")
+			b.WriteString(subtleStyle.Render("?  help") + "\n")
 		}
-		content := m.renderMarkdown(msg)
+		content := b.String()
 		if content != *last {
 			*last = content
 			vp.SetContent(content)
@@ -1113,9 +1113,13 @@ func (m *Model) renderAgentInto(vp *viewport.Model, last *string, id config.Agen
 
 	var b strings.Builder
 	// Lightweight session header
+	meta := fmt.Sprintf("%s", p.Name)
 	if u := process.FormatUptime(p.Uptime()); u != "" {
-		b.WriteString(subtleStyle.Render(fmt.Sprintf("── %s · up %s · %d lines ──", p.Name, u, len(lines))) + "\n")
+		meta += "  ·  up " + u
 	}
+	meta += fmt.Sprintf("  ·  %d lines", len(lines))
+	b.WriteString(subtleStyle.Render(meta) + "\n")
+	b.WriteString(subtleStyle.Render(strings.Repeat("─", min(48, max(m.viewport.Width-2, 8)))) + "\n")
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "[fleet]"):
@@ -1326,7 +1330,7 @@ func (m Model) View() string {
 		helpView = subtleStyle.Render(" ? help · j/k or 1-9 · s start · space jump · i prompt · pgup/pgdn scroll · q quit")
 	}
 
-	sep := subtleStyle.Render(strings.Repeat("─", max(m.width, 1)))
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#27272A")).Render(strings.Repeat("─", max(m.width, 1)))
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		sep,
@@ -1442,10 +1446,9 @@ var (
 
 	sectionStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#A78BFA")).
-			Background(lipgloss.Color("#1C1528")).
-			Padding(0, 1).
-			MarginBottom(1)
+			Foreground(lipgloss.Color("#C4B5FD")).
+			Background(lipgloss.Color("#16121F")).
+			Padding(0, 1)
 
 	leftStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, true, false, false).
@@ -1469,5 +1472,6 @@ var (
 	promptLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#C4B5FD")).Bold(true)
 
 	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
-	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1E1033"))
+	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1A1229"))
 )
+
