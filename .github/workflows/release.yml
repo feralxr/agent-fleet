@@ -47,7 +47,7 @@ jobs:
           build windows 386   fleet-windows-x86.exe
           cd dist && sha256sum * > checksums.txt && ls -la
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
