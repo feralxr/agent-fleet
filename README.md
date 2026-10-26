@@ -94,6 +94,9 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 | `1`–`9` | Select agent by index |
 | `m` | Select model for agent |
 | `p` | Resend last prompt |
+| `t` | Toggle fan-out target |
+| `T` | Prompt templates |
+| `z` | Focus mode (hide sidebar) |
 | `e` | Export agent output to log file |
 | `s` | Start |
 | `x` | Stop |

@@ -50,9 +50,12 @@ type keyMap struct {
 	HistUp   key.Binding
 	HistDown key.Binding
 	ModelSel key.Binding
-	Resend   key.Binding
-	Export   key.Binding
-	PgUp     key.Binding
+	Resend       key.Binding
+	Export       key.Binding
+	ToggleTarget key.Binding
+	Templates    key.Binding
+	FocusMode    key.Binding
+	PgUp         key.Binding
 	PgDown   key.Binding
 	HalfUp   key.Binding
 	HalfDown key.Binding
@@ -168,6 +171,18 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("e"),
 			key.WithHelp("e", "export output"),
 		),
+		ToggleTarget: key.NewBinding(
+			key.WithKeys("t"),
+			key.WithHelp("t", "toggle fan-out target"),
+		),
+		Templates: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "prompt templates"),
+		),
+		FocusMode: key.NewBinding(
+			key.WithKeys("z"),
+			key.WithHelp("z", "focus mode"),
+		),
 		PgUp: key.NewBinding(
 			key.WithKeys("pgup", "ctrl+b"),
 			key.WithHelp("pgup", "scroll up"),
@@ -226,6 +241,10 @@ type Model struct {
 	modelCustom  bool // typing a custom model id
 	modelList    []string
 	modelIdx     int
+	tmplMode     bool
+	tmplIdx      int
+	focusMode    bool
+	fanTargets   map[config.AgentID]bool
 	histIdx      int  // -1 = not browsing history
 	statusMsg    string
 	lastTick     time.Time
@@ -320,6 +339,7 @@ func NewModel() Model {
 		histIdx:    -1,
 		statusMsg:  "Ready",
 		diffCache:  make(map[string]diffCacheEntry),
+		fanTargets: make(map[config.AgentID]bool),
 	}
 	return m
 }
@@ -392,6 +412,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modelMode {
 		return m.updateModelPicker(msg)
+	}
+	if m.tmplMode {
+		return m.updateTemplatePicker(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -611,6 +634,39 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Export):
 		return m.exportOutput()
 
+	case key.Matches(msg, m.keys.ToggleTarget):
+		if len(m.agents) == 0 {
+			return m, nil
+		}
+		id := m.agents[m.selected].ID
+		if m.fanTargets == nil {
+			m.fanTargets = make(map[config.AgentID]bool)
+		}
+		if m.fanTargets[id] {
+			delete(m.fanTargets, id)
+			m.statusMsg = fmt.Sprintf("fan target off · %s", m.agents[m.selected].Name)
+		} else {
+			m.fanTargets[id] = true
+			m.statusMsg = fmt.Sprintf("fan target on · %s (%d selected)", m.agents[m.selected].Name, len(m.fanTargets))
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Templates):
+		m.tmplMode = true
+		m.tmplIdx = 0
+		m.statusMsg = "templates — j/k · enter insert · esc"
+		return m, nil
+
+	case key.Matches(msg, m.keys.FocusMode):
+		m.focusMode = !m.focusMode
+		m.layout()
+		if m.focusMode {
+			m.statusMsg = "focus mode on — z to exit"
+		} else {
+			m.statusMsg = "focus mode off"
+		}
+		return m, nil
+
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode || m.modelMode {
 			return m, nil
@@ -761,16 +817,25 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.fanMode {
+			if expanded, name, ok := expandTemplate(text); ok {
+				text = expanded
+				_ = name
+			}
 			m.pushPrompt(text)
 			n := 0
 			var lastErr error
+			useTargets := len(m.fanTargets) > 0
 			for _, a := range m.agents {
-				if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
-					if err := m.manager.Send(a.ID, text); err != nil {
-						lastErr = err
-					} else {
-						n++
-					}
+				if a.Status != process.StatusRunning && a.Status != process.StatusWaiting {
+					continue
+				}
+				if useTargets && !m.fanTargets[a.ID] {
+					continue
+				}
+				if err := m.manager.Send(a.ID, text); err != nil {
+					lastErr = err
+				} else {
+					n++
 				}
 			}
 			m.fanMode = false
@@ -790,12 +855,18 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if expanded, name, ok := expandTemplate(text); ok {
+			text = expanded
+			m.statusMsg = fmt.Sprintf("template /%s → sent", name)
+		}
 		m.pushPrompt(text)
 		err := m.manager.Send(m.activeID, text)
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("send failed: %v", err)
 		} else {
-			m.statusMsg = "prompt sent"
+			if !strings.HasPrefix(m.statusMsg, "template") {
+				m.statusMsg = "prompt sent"
+			}
 			m.input.Reset()
 			m.histIdx = -1
 		}
@@ -1119,6 +1190,39 @@ func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateTemplatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.FocusOut):
+		m.tmplMode = false
+		m.statusMsg = "templates closed"
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.tmplIdx > 0 {
+			m.tmplIdx--
+		} else if len(promptTemplates) > 0 {
+			m.tmplIdx = len(promptTemplates) - 1
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.tmplIdx < len(promptTemplates)-1 {
+			m.tmplIdx++
+		} else {
+			m.tmplIdx = 0
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Enter):
+		tmpl := promptTemplates[m.tmplIdx]
+		m.tmplMode = false
+		m.inputFocus = true
+		m.input.SetValue("/" + tmpl.ID)
+		m.input.Focus()
+		m.layout()
+		m.statusMsg = fmt.Sprintf("template /%s — edit or Enter to send", tmpl.ID)
+		return m, textarea.Blink
+	}
+	return m, nil
+}
+
 func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
 	cwd := m.manager.Cwd()
 	if !gitutil.IsRepo(cwd) {
@@ -1164,6 +1268,9 @@ func (m *Model) layout() {
 	}
 
 	leftWidth := m.sidebarWidth()
+	if m.focusMode {
+		leftWidth = 0
+	}
 
 	// header(1) + body headers(1) + input(~3) + status(1) + help(1) + borders
 	chrome := 10
@@ -1380,6 +1487,15 @@ func (m Model) View() string {
 	if m.modelMode || m.modelCustom {
 		badges = append(badges, "model")
 	}
+	if m.tmplMode {
+		badges = append(badges, "tmpl")
+	}
+	if m.focusMode {
+		badges = append(badges, "focus")
+	}
+	if len(m.fanTargets) > 0 {
+		badges = append(badges, fmt.Sprintf("fan:%d", len(m.fanTargets)))
+	}
 	if m.inputFocus && !m.pathMode && !m.nameMode && !m.fanMode {
 		badges = append(badges, "input")
 	}
@@ -1412,6 +1528,11 @@ func (m Model) View() string {
 
 	left := m.renderAgentList()
 	leftPane := leftStyle.Width(leftWidth).Height(m.viewport.Height + 1).Render(left)
+	if m.focusMode {
+		leftWidth = 0
+		rightWidth = m.width
+		leftPane = ""
+	}
 
 	outTitle := "OUTPUT"
 	if m.showDiff {
@@ -1524,7 +1645,25 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · m model · p resend · e export · s start · space jump · i prompt")
+		helpView = subtleStyle.Render(" ? help · T tmpl · t target · z focus · m model · p resend · e export")
+	}
+
+	if m.tmplMode {
+		var pb strings.Builder
+		pb.WriteString(sectionStyle.Render(" TEMPLATES ") + "\n\n")
+		for i, tmpl := range promptTemplates {
+			prefix := "  "
+			line := fmt.Sprintf("/%-10s %s", tmpl.ID, tmpl.Label)
+			if i == m.tmplIdx {
+				prefix = activeBar.Render("▌") + " "
+				line = selectedStyle.Render(line)
+			}
+			pb.WriteString(prefix + line + "\n")
+		}
+		pb.WriteString("\n" + subtleStyle.Render(" type /review /tests /explain in prompt too"))
+		picker := rightStyle.Width(m.width - 4).Render(pb.String())
+		sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#27272A")).Render(strings.Repeat("─", max(m.width, 1)))
+		return lipgloss.JoinVertical(lipgloss.Left, header, sep, picker, status, helpView)
 	}
 
 	if m.modelMode {
