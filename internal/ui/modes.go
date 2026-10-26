@@ -33,24 +33,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		// stop all running agents on quit
 		for _, a := range m.agents {
 			_ = m.manager.Stop(a.ID)
 		}
-		// persist session
-		m.session.LastCwd = m.manager.Cwd()
-		m.session.LastAgentID = m.activeID
-		m.session.Worktrees = map[string]string{}
-		m.session.Models = map[string]string{}
-		for _, a := range m.agents {
-			if wt := m.manager.Worktree(a.ID); wt != "" {
-				m.session.Worktrees[string(a.ID)] = wt
-			}
-			if mod := m.manager.GetModel(a.ID); mod != "" {
-				m.session.Models[string(a.ID)] = mod
-			}
-		}
-		_ = config.SaveSession(m.session)
+		m.persistSession()
 		return m, tea.Quit
 
 	case key.Matches(msg, m.keys.Help):
@@ -590,6 +576,36 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) persistSession() {
+	m.session.LastCwd = m.manager.Cwd()
+	m.session.LastAgentID = m.activeID
+	m.session.Worktrees = map[string]string{}
+	m.session.Models = map[string]string{}
+	// Notes and Pins are mutated in place on m.session — keep them.
+	for _, a := range m.agents {
+		if wt := m.manager.Worktree(a.ID); wt != "" {
+			m.session.Worktrees[string(a.ID)] = wt
+		}
+		if mod := m.manager.GetModel(a.ID); mod != "" {
+			m.session.Models[string(a.ID)] = mod
+		}
+	}
+	// Drop empty maps to keep session.json small
+	if len(m.session.Worktrees) == 0 {
+		m.session.Worktrees = nil
+	}
+	if len(m.session.Models) == 0 {
+		m.session.Models = nil
+	}
+	if len(m.session.Notes) == 0 {
+		m.session.Notes = nil
+	}
+	if len(m.session.Pins) == 0 {
+		m.session.Pins = nil
+	}
+	_ = config.SaveSession(m.session)
 }
 
 func (m *Model) pushPrompt(text string) {

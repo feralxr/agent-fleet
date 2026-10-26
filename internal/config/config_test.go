@@ -120,3 +120,28 @@ use_pty = true
 		t.Fatalf("extra: %#v", file.Extra)
 	}
 }
+
+func TestSessionNotesAndPinsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	// ConfigDir uses UserHomeDir -> ~/.config/agent-fleet
+	s := Session{
+		LastCwd: dir,
+		Notes:   map[string]string{"claude": "focus on auth"},
+		Pins:    map[string]string{"1": "review", "2": "tests"},
+		Models:  map[string]string{"claude": "sonnet"},
+	}
+	if err := SaveSession(s); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSession()
+	if got.Notes["claude"] != "focus on auth" {
+		t.Fatalf("notes %v", got.Notes)
+	}
+	if got.Pins["1"] != "review" || got.Pins["2"] != "tests" {
+		t.Fatalf("pins %v", got.Pins)
+	}
+	if got.Models["claude"] != "sonnet" {
+		t.Fatalf("models %v", got.Models)
+	}
+}

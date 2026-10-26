@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -106,16 +107,45 @@ func (m Model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) runPaletteAction(id string) (tea.Model, tea.Cmd) {
-	// Dispatch by synthesizing the same paths as keybindings where possible.
+	if len(m.agents) == 0 && id != "reload" && id != "cwd" {
+		m.statusMsg = "no agents loaded"
+		return m, nil
+	}
 	switch id {
 	case "start":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+		id := m.agents[m.selected].ID
+		if err := m.manager.Start(id); err != nil {
+			m.statusMsg = err.Error()
+		} else {
+			m.statusMsg = fmt.Sprintf("started %s", m.agents[m.selected].Name)
+			m.activeID = id
+		}
+		m.agents = m.manager.List()
+		m.refreshViewport()
+		return m, nil
 	case "stop":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+		id := m.agents[m.selected].ID
+		_ = m.manager.Stop(id)
+		m.statusMsg = fmt.Sprintf("stopped %s", m.agents[m.selected].Name)
+		m.agents = m.manager.List()
+		m.refreshViewport()
+		return m, nil
 	case "restart":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+		id := m.agents[m.selected].ID
+		if err := m.manager.Restart(id); err != nil {
+			m.statusMsg = err.Error()
+		} else {
+			m.statusMsg = fmt.Sprintf("restarted %s", m.agents[m.selected].Name)
+		}
+		m.agents = m.manager.List()
+		m.refreshViewport()
+		return m, nil
 	case "stop-all":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
+		n := m.manager.StopAll()
+		m.statusMsg = fmt.Sprintf("stopped %d agents", n)
+		m.agents = m.manager.List()
+		m.refreshViewport()
+		return m, nil
 	case "model":
 		return m.openModelPicker()
 	case "templates":
@@ -126,27 +156,90 @@ func (m Model) runPaletteAction(id string) (tea.Model, tea.Cmd) {
 	case "note":
 		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	case "compare":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+		m.compareMode = !m.compareMode
+		if m.compareMode {
+			m.split = true
+			m.focusMode = false
+			m.layout()
+			m.outFP = ""
+			m.outFP2 = ""
+			m.refreshViewport()
+			m.statusMsg = "compare on"
+		} else {
+			m.statusMsg = "compare off"
+		}
+		return m, nil
 	case "focus":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+		m.focusMode = !m.focusMode
+		m.layout()
+		m.statusMsg = map[bool]string{true: "focus on", false: "focus off"}[m.focusMode]
+		return m, nil
 	case "worktree":
 		return m.ensureWorktree()
 	case "diff":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+		m.showDiff = !m.showDiff
+		m.lastContent = ""
+		m.refreshViewport()
+		m.statusMsg = map[bool]string{true: "diff view", false: "agent output"}[m.showDiff]
+		return m, nil
 	case "fan":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+		m.inputFocus = true
+		m.fanMode = true
+		m.input.Placeholder = "Fan-out prompt…"
+		m.input.Focus()
+		m.layout()
+		m.statusMsg = "fan-out mode"
+		return m, textarea.Blink
 	case "cwd":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+		m.pathMode = true
+		m.inputFocus = true
+		m.input.SetValue(m.manager.Cwd())
+		m.input.Placeholder = "Working directory…"
+		m.input.Focus()
+		m.layout()
+		return m, textarea.Blink
 	case "export":
 		return m.exportOutput()
 	case "resend":
 		return m.resendLastPrompt()
 	case "split":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+		m.split = !m.split
+		m.layout()
+		m.outFP = ""
+		m.outFP2 = ""
+		m.refreshViewport()
+		m.statusMsg = map[bool]string{true: "split on", false: "split off"}[m.split]
+		return m, nil
 	case "jump":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeySpace})
+		next := m.manager.NextNeedingAttention(m.activeID)
+		if next == "" {
+			m.statusMsg = "nothing needs attention"
+			return m, nil
+		}
+		for i, a := range m.agents {
+			if a.ID == next {
+				m.selected = i
+				m.activeID = next
+				break
+			}
+		}
+		m.outFP = ""
+		m.statusMsg = fmt.Sprintf("jumped to %s", next)
+		m.refreshViewport()
+		return m, nil
 	case "reload":
-		return m.updateNormal(tea.KeyMsg{Type: tea.KeyCtrlR})
+		added := m.manager.ReloadConfigs(&m.session)
+		m.agents = m.manager.List()
+		if m.selected >= len(m.agents) {
+			m.selected = 0
+		}
+		if len(m.agents) > 0 {
+			m.activeID = m.agents[m.selected].ID
+		}
+		m.lastContent = ""
+		m.statusMsg = fmt.Sprintf("reloaded (%d agents, +%d)", len(m.agents), added)
+		m.refreshViewport()
+		return m, nil
 	default:
 		m.statusMsg = fmt.Sprintf("unknown action %s", id)
 		return m, nil
