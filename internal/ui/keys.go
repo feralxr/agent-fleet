@@ -36,6 +36,7 @@ type keyMap struct {
 	Note         key.Binding
 	Compare      key.Binding
 	PinFire      key.Binding
+	Palette      key.Binding
 	PgUp         key.Binding
 	PgDown       key.Binding
 	HalfUp       key.Binding
@@ -175,6 +176,10 @@ func defaultKeyMap() keyMap {
 		PinFire: key.NewBinding(
 			key.WithKeys("'"),
 			key.WithHelp("'", "pinned template"),
+		),
+		Palette: key.NewBinding(
+			key.WithKeys(":"),
+			key.WithHelp(":", "command palette"),
 		),
 		PgUp: key.NewBinding(
 			key.WithKeys("pgup", "ctrl+b"),

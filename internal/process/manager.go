@@ -564,11 +564,7 @@ func (p *AgentProcess) append(line string) {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
 	}
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
-		if looksLikePrompt(line) {
-			p.Status = StatusWaiting
-		} else if p.Status == StatusWaiting {
-			p.Status = StatusRunning
-		}
+		p.Status = ClassifyAttention(p.Status, p.Output, p.lastActive)
 	}
 }
 

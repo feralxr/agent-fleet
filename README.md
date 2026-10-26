@@ -28,6 +28,10 @@ Add any CLI via `fleet.toml`.
 | **PTY** | Real PTY by default for interactive agent TUIs |
 | **Config** | `fleet.toml` + env overrides + custom profiles |
 | **UX** | Fast redraws, mouse scroll, 1–9 agent jump, prompt history |
+| **Palette** | `:` command palette — filter and run any action |
+| **Models** | Per-agent model picker with live CLI discovery |
+| **Templates** | `/review` `/tests` … + pin slots `'` 1–4 |
+| **Notes** | Per-agent notes (`n`) persisted in session |
 
 ## Architecture
 
@@ -123,6 +127,7 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 | `ctrl+l` | Clear output |
 | `ctrl+r` | Reload `fleet.toml` |
 | `S` / `L` | Save / load named session |
+| `:` | Command palette |
 | `?` | Help |
 | `q` | Quit |
 
