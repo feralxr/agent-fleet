@@ -690,15 +690,24 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		if m.modelCustom {
 			id := m.agents[m.selected].ID
-			m.manager.SetModel(id, text)
+			if err := m.manager.ApplyModel(id, text); err != nil {
+				m.statusMsg = fmt.Sprintf("set %s, live switch: %v", text, err)
+			} else {
+				st := m.manager.Get(id)
+				if st != nil && (st.Status == process.StatusRunning || st.Status == process.StatusWaiting) {
+					m.statusMsg = fmt.Sprintf("%s → %s (sent /model)", m.agents[m.selected].Name, text)
+				} else {
+					m.statusMsg = fmt.Sprintf("%s → %s (next start)", m.agents[m.selected].Name, text)
+				}
+			}
 			m.modelCustom = false
 			m.inputFocus = false
 			m.input.Blur()
 			m.input.Reset()
 			m.input.Placeholder = "i  focus  ·  enter  send  ·  esc  cancel"
 			m.layout()
-			m.statusMsg = fmt.Sprintf("%s → %s (applies on next start)", m.agents[m.selected].Name, text)
 			m.agents = m.manager.List()
+			m.refreshViewport()
 			return m, nil
 		}
 
@@ -964,6 +973,7 @@ func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
 	if len(m.agents) > 0 {
 		id = m.agents[m.selected].ID
 	}
+	m.statusMsg = fmt.Sprintf("loading models for %s…", id)
 	list := m.manager.ModelsFor(id)
 	// Always allow custom entry as last item
 	list = append(append([]string{}, list...), "custom…")
@@ -977,7 +987,11 @@ func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.modelMode = true
-	m.statusMsg = fmt.Sprintf("model for %s — j/k select, enter confirm, esc cancel", id)
+	src := "defaults"
+	if len(list) > len(config.DefaultModels(id))+1 {
+		src = "live+defaults"
+	}
+	m.statusMsg = fmt.Sprintf("model · %s (%d, %s) — j/k · enter · esc", id, len(list)-1, src)
 	return m, nil
 }
 
@@ -1025,10 +1039,19 @@ func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.layout()
 			return m, textarea.Blink
 		}
-		m.manager.SetModel(id, choice)
+		if err := m.manager.ApplyModel(id, choice); err != nil {
+			m.statusMsg = fmt.Sprintf("set %s, live switch: %v", choice, err)
+		} else {
+			st := m.manager.Get(id)
+			if st != nil && (st.Status == process.StatusRunning || st.Status == process.StatusWaiting) {
+				m.statusMsg = fmt.Sprintf("%s → %s (sent /model to live session)", m.agents[m.selected].Name, choice)
+			} else {
+				m.statusMsg = fmt.Sprintf("%s → %s (will use on next start)", m.agents[m.selected].Name, choice)
+			}
+		}
 		m.modelMode = false
-		m.statusMsg = fmt.Sprintf("%s → %s (applies on next start)", m.agents[m.selected].Name, choice)
 		m.agents = m.manager.List()
+		m.refreshViewport()
 		return m, nil
 	}
 	return m, nil

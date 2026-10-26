@@ -626,13 +626,29 @@ func (m *Manager) GetModel(id config.AgentID) string {
 	return ""
 }
 
-// ModelsFor returns the catalog for an agent (config override or defaults).
+// ModelsFor returns the catalog for an agent: live CLI list + config + defaults.
 func (m *Manager) ModelsFor(id config.AgentID) []string {
 	cfg := m.findConfig(id)
-	if cfg != nil && len(cfg.Models) > 0 {
-		return cfg.Models
+	var live []string
+	if cfg != nil {
+		live = DiscoverModels(*cfg)
 	}
-	return config.DefaultModels(id)
+	return MergeModels(id, cfg, live)
+}
+
+// ApplyModel sets the model and, if the agent is running, sends /model into the session.
+func (m *Manager) ApplyModel(id config.AgentID, model string) error {
+	model = strings.TrimSpace(model)
+	m.SetModel(id, model)
+	m.mu.RLock()
+	p := m.agents[id]
+	running := p != nil && (p.Status == StatusRunning || p.Status == StatusWaiting)
+	m.mu.RUnlock()
+	if !running || model == "" {
+		return nil
+	}
+	// Most agent TUIs accept /model <id> as an in-session switch.
+	return m.Send(id, "/model "+model)
 }
 
 // StopAll stops every running agent.
