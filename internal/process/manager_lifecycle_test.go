@@ -3,6 +3,7 @@ package process
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -144,4 +145,52 @@ func TestConcurrentAppendAndList(t *testing.T) {
 		_ = list[0].ActivityLabel()
 	}
 	<-done
+}
+
+func TestStartDoesNotHoldManagerDuringSpawn(t *testing.T) {
+	// Use a long-running process so Start must spawn without serializing all List calls.
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep not available")
+	}
+	dir := t.TempDir()
+	// Override claude command via session custom cmd
+	sess := &config.Session{CustomCmds: map[string]string{string(config.AgentClaude): "sleep"}}
+	// Need Args - CustomCmds only sets Command. Inject via ReloadConfigs won't set args.
+	// Build manager and poke config
+	m := NewManager(dir, sess)
+	// Manually adjust configs for sleep 60
+	m.mu.Lock()
+	for i := range m.configs {
+		if m.configs[i].ID == config.AgentClaude {
+			m.configs[i].Command = "sleep"
+			m.configs[i].Args = []string{"30"}
+			f := true
+			m.configs[i].UsePTY = &f
+			// pipes are fine too
+			f2 := false
+			m.configs[i].UsePTY = &f2
+		}
+	}
+	if p := m.agents[config.AgentClaude]; p != nil {
+		p.probeWith(m.configs[0])
+		for _, c := range m.configs {
+			if c.ID == config.AgentClaude {
+				p.probeWith(c)
+			}
+		}
+	}
+	m.mu.Unlock()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- m.Start(config.AgentClaude) }()
+
+	// While start may be in progress, List should still return
+	for i := 0; i < 20; i++ {
+		_ = m.List()
+		_ = m.RunningCount()
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Stop(config.AgentClaude)
 }

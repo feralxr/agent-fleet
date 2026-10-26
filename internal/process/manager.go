@@ -185,55 +185,65 @@ func (m *Manager) RunningCount() int {
 }
 
 func (m *Manager) Start(id config.AgentID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// Resolve agent + config under manager lock, then release so other
+	// agents can List/Start/Stop while this process is spawning.
+	m.mu.RLock()
 	p, ok := m.agents[id]
-	if !ok {
+	cfgPtr := m.findConfig(id)
+	cwd := m.cwd
+	m.mu.RUnlock()
+	if !ok || p == nil {
 		return fmt.Errorf("unknown agent: %s", id)
 	}
+	if cfgPtr == nil {
+		return fmt.Errorf("no config for agent %s", id)
+	}
+	cfg := *cfgPtr
+
 	p.mu.Lock()
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
 		p.mu.Unlock()
 		return nil
 	}
-	p.mu.Unlock()
-	cfg := m.findConfig(id)
-	if cfg == nil {
-		return fmt.Errorf("no config for agent %s", id)
-	}
-	p.probeWith(*cfg)
-	if !p.Available {
-		p.mu.Lock()
+	// probe under agent lock
+	path, err := exec.LookPath(cfg.Command)
+	if err != nil {
+		p.Available = false
+		p.CmdPath = cfg.Command
 		p.Status = StatusMissing
+		cmdPath := p.CmdPath
+		name := p.Name
 		p.mu.Unlock()
-		p.append(fmt.Sprintf("[fleet] binary not found: %s", p.CmdPath))
-		return fmt.Errorf("%s binary not found on PATH (%s)", p.Name, p.CmdPath)
+		p.append(fmt.Sprintf("[fleet] binary not found: %s", cmdPath))
+		return fmt.Errorf("%s binary not found on PATH (%s)", name, cmdPath)
 	}
-
-	runDir := m.cwd
+	p.Available = true
+	p.CmdPath = path
+	runDir := cwd
 	if p.WorktreePath != "" {
 		runDir = p.WorktreePath
 	}
+	model := strings.TrimSpace(p.Model)
+	usePTY := cfg.UsePTY == nil || *cfg.UsePTY
+	// Keep p.mu through spawn so Stop cannot interleave mid-start.
 	args := append([]string{}, cfg.Args...)
-	if model := strings.TrimSpace(p.Model); model != "" {
+	if model != "" {
 		args = append(args, config.ModelFlag(id), model)
 	}
 	cmd := exec.Command(cfg.Command, args...)
 	cmd.Dir = runDir
 	cmd.Env = os.Environ()
-
 	cmdLine := cfg.Command
 	if len(args) > 0 {
 		cmdLine += " " + strings.Join(args, " ")
 	}
 
-	usePTY := cfg.UsePTY == nil || *cfg.UsePTY
 	if usePTY {
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
 			p.Status = StatusError
 			p.lastErr = err.Error()
+			p.mu.Unlock()
 			p.append(fmt.Sprintf("[fleet] failed to start pty: %v", err))
 			return err
 		}
@@ -247,7 +257,10 @@ func (m *Manager) Start(id config.AgentID) error {
 		p.cancel = make(chan struct{})
 		p.done = make(chan struct{})
 		p.lastErr = ""
-		p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pty) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
+		name := p.Name
+		pid := cmd.Process.Pid
+		p.mu.Unlock()
+		p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pty) in %s", name, cmdLine, pid, runDir))
 		go m.stream(p, ptmx)
 		go m.wait(p)
 		return nil
@@ -255,22 +268,26 @@ func (m *Manager) Start(id config.AgentID) error {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		p.mu.Unlock()
 		return fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
+		p.mu.Unlock()
 		return err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
+		p.mu.Unlock()
 		return err
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		p.Status = StatusError
 		p.lastErr = err.Error()
+		p.mu.Unlock()
 		p.append(fmt.Sprintf("[fleet] failed to start: %v", err))
 		return err
 	}
@@ -283,7 +300,10 @@ func (m *Manager) Start(id config.AgentID) error {
 	p.cancel = make(chan struct{})
 	p.done = make(chan struct{})
 	p.lastErr = ""
-	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pipes) in %s", p.Name, cmdLine, cmd.Process.Pid, runDir))
+	name := p.Name
+	pid := cmd.Process.Pid
+	p.mu.Unlock()
+	p.append(fmt.Sprintf("[fleet] started %s — %s (pid %d, pipes) in %s", name, cmdLine, pid, runDir))
 	go m.stream(p, stdout)
 	go m.stream(p, stderr)
 	go m.wait(p)
