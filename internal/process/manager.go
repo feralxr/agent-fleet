@@ -95,14 +95,34 @@ func NewManager(cwd string, session *config.Session) *Manager {
 	return m
 }
 
+// List returns display snapshots of agents (safe for concurrent UI reads).
+// Process control still goes through Get/Start/Stop with live pointers.
 func (m *Manager) List() []*AgentProcess {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]*AgentProcess, 0, len(m.agents))
+	out := make([]*AgentProcess, 0, len(m.configs))
 	for _, a := range m.configs {
-		if p, ok := m.agents[a.ID]; ok {
-			out = append(out, p)
+		p, ok := m.agents[a.ID]
+		if !ok {
+			continue
 		}
+		p.mu.Lock()
+		cp := &AgentProcess{
+			ID:           p.ID,
+			Name:         p.Name,
+			Status:       p.Status,
+			Available:    p.Available,
+			CmdPath:      p.CmdPath,
+			WorktreePath: p.WorktreePath,
+			UsePTY:       p.UsePTY,
+			Model:        p.Model,
+			started:      p.started,
+			lastActive:   p.lastActive,
+			lastErr:      p.lastErr,
+			waitReason:   p.waitReason,
+		}
+		p.mu.Unlock()
+		out = append(out, cp)
 	}
 	return out
 }
@@ -718,11 +738,19 @@ func (m *Manager) ModelsForDefaultsOnly(id config.AgentID) []string {
 func (m *Manager) ApplyModel(id config.AgentID, model string) error {
 	model = strings.TrimSpace(model)
 	m.SetModel(id, model)
+	if model == "" {
+		return nil
+	}
 	m.mu.RLock()
 	p := m.agents[id]
-	running := p != nil && (p.Status == StatusRunning || p.Status == StatusWaiting)
 	m.mu.RUnlock()
-	if !running || model == "" {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	running := p.Status == StatusRunning || p.Status == StatusWaiting
+	p.mu.Unlock()
+	if !running {
 		return nil
 	}
 	// Most agent TUIs accept /model <id> as an in-session switch.

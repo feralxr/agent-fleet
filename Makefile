@@ -1,4 +1,4 @@
-.PHONY: build test fmt vet install clean release example
+.PHONY: build test test-race fmt vet ci install clean release example
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -6,7 +6,10 @@ build:
 	go build -ldflags "-X main.version=$(VERSION)" -o fleet ./cmd/fleet
 
 test:
-	go test ./...
+	go test ./... -count=1 -timeout 120s
+
+test-race:
+	go test ./internal/process/ ./internal/config/ ./internal/gitutil/ -race -count=1 -timeout 180s
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
@@ -14,11 +17,19 @@ fmt:
 vet:
 	go vet ./...
 
+ci: fmt
+	test -z "$$(gofmt -l .)"
+	$(MAKE) vet
+	$(MAKE) test
+	$(MAKE) test-race
+	$(MAKE) build
+
 install:
 	go install -ldflags "-X main.version=$(VERSION)" ./cmd/fleet
 
 clean:
 	rm -f fleet
+	rm -rf dist
 
 example:
 	@mkdir -p $(HOME)/.config/agent-fleet

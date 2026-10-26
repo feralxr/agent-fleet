@@ -42,3 +42,15 @@ Use this before treating a build as daily-driver ready.
 - Claude has no live `models` list — curated aliases only
 - Attention heuristics are best-effort (agent UIs differ)
 - Windows PTY behavior depends on host terminal
+
+
+## CI reliability
+
+Local parity with GitHub Actions:
+
+```bash
+make ci          # fmt + vet + test + race + build
+make test-race   # race detector on process/config/gitutil
+```
+
+CI also cross-compiles linux/darwin/windows (amd64+arm64/386) on every PR/main push.

@@ -105,3 +105,18 @@ func TestCwdEffectiveWorktree(t *testing.T) {
 		t.Fatalf("got %s", m.EffectiveCwd(config.AgentClaude))
 	}
 }
+
+func TestListReturnsSnapshots(t *testing.T) {
+	m := NewManager(t.TempDir(), nil)
+	list := m.List()
+	if len(list) == 0 {
+		t.Fatal("empty list")
+	}
+	// Mutating snapshot status must not change live agent
+	live := m.Get(list[0].ID)
+	before := live.Status
+	list[0].Status = StatusError
+	if live.Status != before {
+		t.Fatal("List exposed live pointer — status mutated")
+	}
+}
