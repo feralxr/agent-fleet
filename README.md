@@ -47,6 +47,8 @@ Fleet is a single terminal process. The TUI owns layout and input; the process m
   <img src="docs/assets/flow.svg" alt="Agent Fleet workflow diagram" width="100%"/>
 </p>
 
+See [CHANGELOG](CHANGELOG.md) and the [stability checklist](docs/STABILITY.md) for v0.3.0.
+
 ## Install
 
 **From GitHub Releases** (recommended):
