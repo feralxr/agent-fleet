@@ -668,6 +668,12 @@ func (m *Manager) ModelsFor(id config.AgentID) []string {
 	return MergeModels(id, cfg, live)
 }
 
+// ModelsForDefaultsOnly skips live CLI discovery (for instant UI).
+func (m *Manager) ModelsForDefaultsOnly(id config.AgentID) []string {
+	cfg := m.findConfig(id)
+	return MergeModels(id, cfg, nil)
+}
+
 // ApplyModel sets the model and, if the agent is running, sends /model into the session.
 func (m *Manager) ApplyModel(id config.AgentID, model string) error {
 	model = strings.TrimSpace(model)
