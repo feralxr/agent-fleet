@@ -6,47 +6,60 @@ import (
 	"time"
 )
 
-// Heuristics for when an agent is blocked on the user.
+// waitingPatterns: ordered from specific → general.
 var waitingPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\b(awaiting|waiting for)\b.*\b(input|approval|confirm|permission|response)\b`),
-	regexp.MustCompile(`(?i)\b(do you want to|shall i|should i|continue\?|proceed\?|apply these changes\?)\b`),
-	regexp.MustCompile(`(?i)\b(y/n|yes/no|\[y/n\]|\(y/n\)|\[Y/n\]|\[y/N\])\b`),
-	regexp.MustCompile(`(?i)\b(press enter|hit enter|confirm to|type ['\"]?(yes|y|ok)['\"]? to)\b`),
-	regexp.MustCompile(`(?i)\b(permission required|needs? approval|awaiting approval)\b`),
-	regexp.MustCompile(`(?i)^\s*>\s*$`),                         // bare prompt
-	regexp.MustCompile(`(?i)\b(allow|deny|always allow)\b.*\?`), // tool permission prompts
+	regexp.MustCompile(`(?i)\b(awaiting|waiting for)\b.*\b(input|approval|confirm|permission|response|answer)\b`),
+	regexp.MustCompile(`(?i)\b(permission required|needs? (your )?approval|awaiting approval|tool permission)\b`),
+	regexp.MustCompile(`(?i)\b(allow|deny|always allow|allow once)\b.*\?`),
+	regexp.MustCompile(`(?i)\b(do you want to|shall i|should i|may i|can i go ahead)\b`),
+	regexp.MustCompile(`(?i)\b(continue\?|proceed\?|apply these changes\?|accept\?|confirm\?)\b`),
+	regexp.MustCompile(`(?i)\b(y/n|yes/no|\[y/n\]|\(y/n\)|\[Y/n\]|\[y/N\]|\(yes/no\))\b`),
+	regexp.MustCompile(`(?i)\b(press enter|hit enter|confirm to|type ['"]?(yes|y|ok|continue)['"]? to)\b`),
+	regexp.MustCompile(`(?i)\b(choose one|select an option|enter a number|pick a number)\b`),
+	regexp.MustCompile(`(?i)^\s*(human|user|you):\s*$`),
+	regexp.MustCompile(`(?i)^\s*>\s*$`),
 }
 
-// ClassifyAttention scans recent output lines and returns waiting=true when
-// the agent appears blocked on human input. Only applies while running.
+// ClassifyAttention scans recent output and returns waiting when the agent
+// looks blocked on human input. Also returns a short reason for the UI.
 func ClassifyAttention(status Status, recent []string, lastActive time.Time) Status {
+	st, _ := ClassifyAttentionReason(status, recent, lastActive)
+	return st
+}
+
+// ClassifyAttentionReason is the detailed form used by the process layer.
+func ClassifyAttentionReason(status Status, recent []string, lastActive time.Time) (Status, string) {
 	if status != StatusRunning && status != StatusWaiting {
-		return status
+		return status, ""
 	}
-	// Look at last ~12 non-empty lines
 	var lines []string
-	for i := len(recent) - 1; i >= 0 && len(lines) < 12; i-- {
+	for i := len(recent) - 1; i >= 0 && len(lines) < 16; i-- {
 		s := strings.TrimSpace(recent[i])
-		if s == "" || strings.HasPrefix(s, "[fleet]") {
+		if s == "" || strings.HasPrefix(s, "[fleet]") || strings.HasPrefix(s, "› ") {
 			continue
+		}
+		// Collapse very long lines for matching
+		if len(s) > 240 {
+			s = s[:240]
 		}
 		lines = append(lines, s)
 	}
-	// Most recent first in lines
 	for _, line := range lines {
 		for _, re := range waitingPatterns {
 			if re.MatchString(line) {
-				return StatusWaiting
+				reason := line
+				if len(reason) > 48 {
+					reason = reason[:45] + "…"
+				}
+				return StatusWaiting, reason
 			}
 		}
 	}
-	// If we were waiting but new output arrived recently without match, clear
 	if status == StatusWaiting {
 		if !lastActive.IsZero() && time.Since(lastActive) < 800*time.Millisecond {
-			return StatusRunning
+			return StatusRunning, ""
 		}
-		// Keep waiting if idle with no new contradicting evidence
-		return StatusWaiting
+		return StatusWaiting, "still waiting"
 	}
-	return StatusRunning
+	return StatusRunning, ""
 }

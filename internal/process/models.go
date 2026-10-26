@@ -6,14 +6,44 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/feralxr/agent-fleet/internal/config"
 )
 
+type modelCacheEntry struct {
+	list []string
+	at   time.Time
+}
+
+var (
+	modelCache    = map[string]modelCacheEntry{}
+	modelCacheMu  sync.Mutex
+	modelCacheTTL = 2 * time.Minute
+)
+
 // DiscoverModels asks the agent CLI for available models (best-effort, short timeout).
-// Returns nil if the CLI has no list command or fails — callers should fall back to defaults.
+// Results are cached per command identity for modelCacheTTL.
 func DiscoverModels(cfg config.AgentConfig) []string {
+	key := cfg.Command + "\x00" + strings.Join(cfg.Args, "\x00") + "\x00" + string(cfg.ID)
+	modelCacheMu.Lock()
+	if e, ok := modelCache[key]; ok && time.Since(e.at) < modelCacheTTL {
+		out := append([]string{}, e.list...)
+		modelCacheMu.Unlock()
+		return out
+	}
+	modelCacheMu.Unlock()
+
+	list := discoverModelsUncached(cfg)
+
+	modelCacheMu.Lock()
+	modelCache[key] = modelCacheEntry{list: append([]string{}, list...), at: time.Now()}
+	modelCacheMu.Unlock()
+	return list
+}
+
+func discoverModelsUncached(cfg config.AgentConfig) []string {
 	if cfg.Command == "" {
 		return nil
 	}
@@ -27,7 +57,6 @@ func DiscoverModels(cfg config.AgentConfig) []string {
 	case config.AgentGrok:
 		cmd = exec.CommandContext(ctx, cfg.Command, "models")
 	case config.AgentCursor:
-		// cursor agent models  OR  cursor-agent models
 		if cfg.Command == "cursor" || (len(cfg.Args) > 0 && cfg.Args[0] == "agent") {
 			args := append([]string{}, cfg.Args...)
 			args = append(args, "models")
@@ -36,10 +65,8 @@ func DiscoverModels(cfg config.AgentConfig) []string {
 			cmd = exec.CommandContext(ctx, cfg.Command, "models")
 		}
 	case config.AgentClaude:
-		// Claude Code has no stable "models" subcommand; aliases only.
 		return nil
 	default:
-		// Try common patterns for custom agents
 		cmd = exec.CommandContext(ctx, cfg.Command, "models")
 	}
 	if cmd == nil {
@@ -50,7 +77,6 @@ func DiscoverModels(cfg config.AgentConfig) []string {
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		// Retry cursor with --list-models
 		if cfg.ID == config.AgentCursor {
 			ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel2()
@@ -79,24 +105,21 @@ func parseModelLines(out string) []string {
 		if line == "" {
 			continue
 		}
-		// Skip obvious headers / noise
 		low := strings.ToLower(line)
 		if strings.HasPrefix(low, "available") ||
-			strings.HasPrefix(low, "model") && strings.Contains(low, "list") ||
+			(strings.HasPrefix(low, "model") && strings.Contains(low, "list")) ||
 			strings.HasPrefix(low, "usage:") ||
 			strings.HasPrefix(low, "error") ||
 			strings.HasPrefix(line, "─") ||
 			strings.HasPrefix(line, "=") {
 			continue
 		}
-		// Take first token; strip bullets and markers
 		line = strings.TrimLeft(line, "•*-›> \t")
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
 		id := fields[0]
-		// Strip trailing punctuation / (default) markers
 		id = strings.Trim(id, ",;")
 		if i := strings.Index(id, "("); i > 0 {
 			id = strings.TrimSpace(id[:i])
@@ -104,7 +127,6 @@ func parseModelLines(out string) []string {
 		if len(id) < 2 || len(id) > 80 {
 			continue
 		}
-		// Must look like a model id: letters, digits, / - . _
 		ok := true
 		for _, r := range id {
 			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||

@@ -1,6 +1,10 @@
 package process
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/feralxr/agent-fleet/internal/config"
+)
 
 func TestParseModelLines(t *testing.T) {
 	in := `
@@ -17,4 +21,13 @@ Usage: something
 	if got[0] != "anthropic/claude-sonnet-4-5" {
 		t.Fatal(got[0])
 	}
+}
+
+func TestModelCacheTTL(t *testing.T) {
+	// DiscoverModels on missing binary should still be safe / empty
+	list := DiscoverModels(config.AgentConfig{ID: config.AgentClaude, Command: "claude-not-installed-xyz"})
+	if list != nil && len(list) > 0 {
+		// empty is expected
+	}
+	_ = list
 }

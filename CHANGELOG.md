@@ -4,6 +4,13 @@
 
 Stability-focused release: richer agentic UX, cleaner structure, safer session persistence.
 
+### Depth pass (post-tag polish on main)
+- Attention: more prompt patterns + visible wait *reason* in sidebar
+- Model discovery: 2-minute in-process cache
+- Templates: structured bodies (`/plan`, `/pr` added)
+- Stream: CR/CRLF split for agent TUI redraws
+- Fan-out status lists target agent names
+
 ### Features
 - **Command palette** (`:`) — filter and run start/stop/model/templates/worktree/fan-out/…
 - **Per-agent models** (`m`) — curated catalogs + live CLI discovery (async) + mid-session `/model`

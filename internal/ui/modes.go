@@ -523,6 +523,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pushPrompt(text)
 			n := 0
 			var lastErr error
+			var names []string
 			useTargets := len(m.fanTargets) > 0
 			for _, a := range m.agents {
 				if a.Status != process.StatusRunning && a.Status != process.StatusWaiting {
@@ -535,6 +536,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					lastErr = err
 				} else {
 					n++
+					names = append(names, a.Name)
 				}
 			}
 			m.fanMode = false
@@ -544,11 +546,17 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Reset()
 			m.input.Placeholder = "Type a prompt and press Enter to send to the active agent…"
 			if n == 0 {
-				m.statusMsg = "fan-out: no running agents"
-			} else if lastErr != nil {
-				m.statusMsg = fmt.Sprintf("fan-out: sent to %d (errors: %v)", n, lastErr)
+				m.statusMsg = "fan-out: no matching running agents"
 			} else {
-				m.statusMsg = fmt.Sprintf("fan-out: sent to %d agents", n)
+				list := strings.Join(names, ", ")
+				if len(list) > 40 {
+					list = list[:37] + "…"
+				}
+				if lastErr != nil {
+					m.statusMsg = fmt.Sprintf("fan-out %d [%s] (err: %v)", n, list, lastErr)
+				} else {
+					m.statusMsg = fmt.Sprintf("fan-out %d [%s]", n, list)
+				}
 			}
 			m.refreshViewport()
 			return m, nil

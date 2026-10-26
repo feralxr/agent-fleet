@@ -660,6 +660,14 @@ func (m Model) renderAgentList() string {
 				}
 				st += act
 			}
+			if a.Status == process.StatusWaiting {
+				if reason := a.WaitReason(); reason != "" && reason != "still waiting" {
+					if len(reason) > 22 {
+						reason = reason[:20] + "…"
+					}
+					st += " · " + reason
+				}
+			}
 		}
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
 			if d := m.cachedDiffShort(dir); d != "" && d != "clean" {

@@ -52,6 +52,7 @@ type AgentProcess struct {
 	started    time.Time
 	lastActive time.Time
 	lastErr    string
+	waitReason string
 }
 
 type Manager struct {
@@ -509,6 +510,8 @@ func (m *Manager) stream(p *AgentProcess, r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
+	// Treat both \n and \r as line boundaries (agent TUIs often redraw with CR).
+	scanner.Split(scanLinesCR)
 	for scanner.Scan() {
 		select {
 		case <-p.cancel:
@@ -521,6 +524,34 @@ func (m *Manager) stream(p *AgentProcess, r io.Reader) {
 			p.append(line)
 		}
 	}
+}
+
+func scanLinesCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, c := range data {
+		if c == '\n' {
+			return i + 1, dropCR(data[:i]), nil
+		}
+		if c == '\r' {
+			if i+1 < len(data) && data[i+1] == '\n' {
+				return i + 2, data[:i], nil
+			}
+			return i + 1, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), dropCR(data), nil
+	}
+	return 0, nil, nil
+}
+
+func dropCR(data []byte) []byte {
+	if len(data) > 0 && data[len(data)-1] == '\r' {
+		return data[:len(data)-1]
+	}
+	return data
 }
 
 func (m *Manager) wait(p *AgentProcess) {
@@ -564,7 +595,13 @@ func (p *AgentProcess) append(line string) {
 		p.Output = p.Output[len(p.Output)-trimToLines:]
 	}
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
-		p.Status = ClassifyAttention(p.Status, p.Output, p.lastActive)
+		st, reason := ClassifyAttentionReason(p.Status, p.Output, p.lastActive)
+		p.Status = st
+		if st == StatusWaiting {
+			p.waitReason = reason
+		} else {
+			p.waitReason = ""
+		}
 	}
 }
 
@@ -614,6 +651,13 @@ func (p *AgentProcess) IdleFor() time.Duration {
 		return 0
 	}
 	return time.Since(p.lastActive)
+}
+
+// WaitReason last detected attention reason (empty if not waiting).
+func (p *AgentProcess) WaitReason() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.waitReason
 }
 
 // ActivityLabel short UX string: active / thinking / idle.
