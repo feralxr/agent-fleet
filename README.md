@@ -93,6 +93,8 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 | `↑` / `k` · `↓` / `j` | Previous / next agent (wraps) |
 | `1`–`9` | Select agent by index |
 | `m` | Select model for agent |
+| `p` | Resend last prompt |
+| `e` | Export agent output to log file |
 | `s` | Start |
 | `x` | Stop |
 | `X` | Stop all |

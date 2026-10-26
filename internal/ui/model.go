@@ -50,6 +50,8 @@ type keyMap struct {
 	HistUp   key.Binding
 	HistDown key.Binding
 	ModelSel key.Binding
+	Resend   key.Binding
+	Export   key.Binding
 	PgUp     key.Binding
 	PgDown   key.Binding
 	HalfUp   key.Binding
@@ -158,6 +160,14 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("m"),
 			key.WithHelp("m", "select model"),
 		),
+		Resend: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "resend last prompt"),
+		),
+		Export: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "export output"),
+		),
 		PgUp: key.NewBinding(
 			key.WithKeys("pgup", "ctrl+b"),
 			key.WithHelp("pgup", "scroll up"),
@@ -184,9 +194,9 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Start, k.Stop, k.StopAll, k.Restart},
-		{k.Jump, k.Diff, k.Worktree, k.Fan, k.Cwd, k.Split},
-		{k.PgUp, k.PgDown, k.HalfUp, k.HalfDown, k.Copy, k.Clear},
-		{k.SaveName, k.LoadName, k.Reload, k.FocusIn, k.Help, k.Quit},
+		{k.Jump, k.Diff, k.Worktree, k.Fan, k.ModelSel, k.Split},
+		{k.Resend, k.Export, k.Copy, k.Clear, k.Cwd, k.Reload},
+		{k.PgUp, k.PgDown, k.FocusIn, k.Help, k.Quit},
 	}
 }
 
@@ -595,6 +605,12 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ModelSel):
 		return m.openModelPicker()
 
+	case key.Matches(msg, m.keys.Resend):
+		return m.resendLastPrompt()
+
+	case key.Matches(msg, m.keys.Export):
+		return m.exportOutput()
+
 	case key.Matches(msg, m.keys.FocusIn):
 		if m.pathMode || m.modelMode {
 			return m, nil
@@ -967,6 +983,52 @@ func (m *Model) refreshDiffCacheLazy() {
 	}
 }
 
+
+func (m Model) resendLastPrompt() (tea.Model, tea.Cmd) {
+	if len(m.session.PromptHist) == 0 {
+		m.statusMsg = "no prompt history"
+		return m, nil
+	}
+	text := m.session.PromptHist[len(m.session.PromptHist)-1]
+	id := m.agents[m.selected].ID
+	p := m.manager.Get(id)
+	if p == nil || (p.Status != process.StatusRunning && p.Status != process.StatusWaiting) {
+		m.statusMsg = "start the agent before resending"
+		return m, nil
+	}
+	if err := m.manager.Send(id, text); err != nil {
+		m.statusMsg = fmt.Sprintf("resend failed: %v", err)
+	} else {
+		m.statusMsg = fmt.Sprintf("resent to %s (%d chars)", p.Name, len(text))
+		m.refreshViewport()
+	}
+	return m, nil
+}
+
+func (m Model) exportOutput() (tea.Model, tea.Cmd) {
+	id := m.agents[m.selected].ID
+	p := m.manager.Get(id)
+	if p == nil {
+		m.statusMsg = "nothing to export"
+		return m, nil
+	}
+	lines := p.SnapshotOutput()
+	if len(lines) == 0 {
+		m.statusMsg = "nothing to export"
+		return m, nil
+	}
+	dir := m.manager.Cwd()
+	name := fmt.Sprintf("fleet-%s-%s.log", id, time.Now().Format("150405"))
+	path := filepath.Join(dir, name)
+	header := fmt.Sprintf("# %s · %s · %s\n# model: %s\n\n", p.Name, p.Status, m.manager.EffectiveCwd(id), p.Model)
+	body := header + strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		m.statusMsg = fmt.Sprintf("export failed: %v", err)
+	} else {
+		m.statusMsg = fmt.Sprintf("exported %d lines → %s", len(lines), name)
+	}
+	return m, nil
+}
 
 func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
 	id := m.activeID
@@ -1462,7 +1524,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · j/k · m model · s start · space jump · i prompt · q quit")
+		helpView = subtleStyle.Render(" ? help · m model · p resend · e export · s start · space jump · i prompt")
 	}
 
 	if m.modelMode {
@@ -1576,6 +1638,15 @@ func (m Model) renderAgentList() string {
 			}
 			st += a.Model
 		}
+		if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
+			act := a.ActivityLabel()
+			if act != "" {
+				if st != "" {
+					st += " · "
+				}
+				st += act
+			}
+		}
 		if dir := m.manager.EffectiveCwd(a.ID); dir != "" {
 			if d := m.cachedDiffShort(dir); d != "" && d != "clean" {
 				if st != "" {
@@ -1584,12 +1655,21 @@ func (m Model) renderAgentList() string {
 				st += d
 			}
 		}
-		sec := subtleStyle.Render(fmt.Sprintf("    %s", st))
+		spin := ""
+		if a.Status == process.StatusRunning && a.IdleFor() < 2*time.Second {
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spin = frames[int(time.Now().UnixMilli()/120)%len(frames)] + " "
+		}
+		sec := subtleStyle.Render(fmt.Sprintf("    %s%s", spin, st))
 		b.WriteString(sec + "\n")
 	}
 
+	b.WriteString("\n")
+	b.WriteString(subtleStyle.Render(" ● run  ◉ wait  ✗ err") + "\n")
+	b.WriteString(subtleStyle.Render(" p resend  e export") + "\n")
 	return b.String()
 }
+
 
 // Styles — dark violet cockpit palette
 var (

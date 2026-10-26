@@ -607,6 +607,39 @@ func FormatUptime(d time.Duration) string {
 	return fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
 }
 
+// IdleFor how long since last output while running/waiting.
+func (p *AgentProcess) IdleFor() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Status != StatusRunning && p.Status != StatusWaiting {
+		return 0
+	}
+	if p.lastActive.IsZero() {
+		return 0
+	}
+	return time.Since(p.lastActive)
+}
+
+// ActivityLabel short UX string: active / thinking / idle.
+func (p *AgentProcess) ActivityLabel() string {
+	switch p.Status {
+	case StatusWaiting:
+		return "needs you"
+	case StatusRunning:
+		idle := p.IdleFor()
+		if idle < 2*time.Second {
+			return "streaming"
+		}
+		if idle < 15*time.Second {
+			return "working"
+		}
+		return fmt.Sprintf("quiet %s", FormatUptime(idle))
+	default:
+		return string(p.Status)
+	}
+}
+
+
 // SetModel sets the model for an agent (applied on next Start).
 func (m *Manager) SetModel(id config.AgentID, model string) {
 	m.mu.Lock()
