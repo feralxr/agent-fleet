@@ -70,8 +70,9 @@ func NewManager(cwd string, session *config.Session) *Manager {
 		cwd:     cwd,
 	}
 	for _, a := range cfgs {
+		usePTY := a.UsePTY == nil || *a.UsePTY
 		p := &AgentProcess{
-			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
+			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: usePTY,
 			Output: make([]string, 0, 128),
 			Model:  a.Model,
 		}
@@ -145,12 +146,12 @@ func (m *Manager) ReloadConfigs(session *config.Session) int {
 	for _, a := range cfgs {
 		if existing, ok := m.agents[a.ID]; ok {
 			existing.Name = a.Name
-			existing.UsePTY = a.UsePTY
+			existing.UsePTY = a.UsePTY == nil || *a.UsePTY
 			existing.probeWith(a)
 			continue
 		}
 		p := &AgentProcess{
-			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
+			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY == nil || *a.UsePTY,
 			Output: make([]string, 0, 128),
 		}
 		p.probeWith(a)
@@ -191,16 +192,21 @@ func (m *Manager) Start(id config.AgentID) error {
 	if !ok {
 		return fmt.Errorf("unknown agent: %s", id)
 	}
+	p.mu.Lock()
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
+		p.mu.Unlock()
 		return nil
 	}
+	p.mu.Unlock()
 	cfg := m.findConfig(id)
 	if cfg == nil {
 		return fmt.Errorf("no config for agent %s", id)
 	}
 	p.probeWith(*cfg)
 	if !p.Available {
+		p.mu.Lock()
 		p.Status = StatusMissing
+		p.mu.Unlock()
 		p.append(fmt.Sprintf("[fleet] binary not found: %s", p.CmdPath))
 		return fmt.Errorf("%s binary not found on PATH (%s)", p.Name, p.CmdPath)
 	}
@@ -222,7 +228,8 @@ func (m *Manager) Start(id config.AgentID) error {
 		cmdLine += " " + strings.Join(args, " ")
 	}
 
-	if cfg.UsePTY {
+	usePTY := cfg.UsePTY == nil || *cfg.UsePTY
+	if usePTY {
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
 			p.Status = StatusError
@@ -290,12 +297,15 @@ func (m *Manager) Stop(id config.AgentID) error {
 		m.mu.Unlock()
 		return fmt.Errorf("unknown agent: %s", id)
 	}
+	p.mu.Lock()
 	if p.Status != StatusRunning && p.Status != StatusWaiting {
+		p.mu.Unlock()
 		m.mu.Unlock()
 		return nil
 	}
 	if p.cmd == nil || p.cmd.Process == nil {
 		p.Status = StatusStopped
+		p.mu.Unlock()
 		m.mu.Unlock()
 		return nil
 	}
@@ -312,10 +322,12 @@ func (m *Manager) Stop(id config.AgentID) error {
 		_ = p.ptmx.Close()
 		p.ptmx = nil
 	}
-	_ = p.cmd.Process.Signal(os.Interrupt)
+	proc := p.cmd.Process
 	cmd := p.cmd
 	done := p.done
+	p.mu.Unlock()
 	m.mu.Unlock()
+	_ = proc.Signal(os.Interrupt)
 
 	select {
 	case <-done:
@@ -323,9 +335,11 @@ func (m *Manager) Stop(id config.AgentID) error {
 		_ = cmd.Process.Kill()
 		<-done
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p.Status = StatusStopped
+	p.mu.Lock()
+	if p.Status == StatusRunning || p.Status == StatusWaiting || p.Status == StatusError {
+		p.Status = StatusStopped
+	}
+	p.mu.Unlock()
 	p.append("[fleet] stopped")
 	return nil
 }

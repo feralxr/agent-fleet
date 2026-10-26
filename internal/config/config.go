@@ -27,9 +27,10 @@ type AgentConfig struct {
 	Command     string   `toml:"command" json:"command"`
 	Args        []string `toml:"args" json:"args"`
 	Description string   `toml:"description" json:"description"`
-	UsePTY      bool     `toml:"use_pty" json:"use_pty"`
-	Models      []string `toml:"models" json:"models,omitempty"` // optional catalog override
-	Model       string   `toml:"model" json:"model,omitempty"`   // default model for this agent
+	// UsePTY is a pointer so TOML can distinguish unset / true / false.
+	UsePTY *bool    `toml:"use_pty" json:"use_pty,omitempty"`
+	Models []string `toml:"models" json:"models,omitempty"` // optional catalog override
+	Model  string   `toml:"model" json:"model,omitempty"`   // default model for this agent
 }
 
 // FleetFile is the on-disk fleet.toml schema.
@@ -85,13 +86,17 @@ func LoadFleetFile() (*FleetFile, string, error) {
 	return &FleetFile{}, "", nil
 }
 
+// BoolPtr is a small helper for TOML/literal configs.
+func BoolPtr(v bool) *bool { return &v }
+
 // BuiltinAgents returns the default four agents.
 func BuiltinAgents() []AgentConfig {
+	yes := BoolPtr(true)
 	return []AgentConfig{
-		{ID: AgentClaude, Name: "Claude Code", Command: "claude", Description: "Anthropic Claude Code", UsePTY: true},
-		{ID: AgentCursor, Name: "Cursor", Command: "cursor", Args: []string{"agent"}, Description: "Cursor agent CLI", UsePTY: true},
-		{ID: AgentOpenCode, Name: "OpenCode", Command: "opencode", Description: "OpenCode coding agent", UsePTY: true},
-		{ID: AgentGrok, Name: "Grok", Command: "grok", Description: "xAI Grok coding agent", UsePTY: true},
+		{ID: AgentClaude, Name: "Claude Code", Command: "claude", Description: "Anthropic Claude Code", UsePTY: yes},
+		{ID: AgentCursor, Name: "Cursor", Command: "cursor", Args: []string{"agent"}, Description: "Cursor agent CLI", UsePTY: yes},
+		{ID: AgentOpenCode, Name: "OpenCode", Command: "opencode", Description: "OpenCode coding agent", UsePTY: yes},
+		{ID: AgentGrok, Name: "Grok", Command: "grok", Description: "xAI Grok coding agent", UsePTY: yes},
 	}
 }
 
@@ -125,8 +130,10 @@ func ResolveAgents(file *FleetFile, session *Session) []AgentConfig {
 		if a.Command == "" {
 			continue
 		}
-		if isBuiltinID(a.ID) && !a.UsePTY {
-			a.UsePTY = globalPTY
+		if a.UsePTY == nil {
+			// unset → inherit global (default true)
+			v := globalPTY
+			a.UsePTY = &v
 		}
 		envKey := "FLEET_" + strings.ToUpper(strings.ReplaceAll(string(a.ID), "-", "_")) + "_CMD"
 		if v := os.Getenv(envKey); v != "" {

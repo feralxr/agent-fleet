@@ -28,7 +28,7 @@ func TestBuiltinAgents(t *testing.T) {
 func TestResolveAgentsExtra(t *testing.T) {
 	file := &FleetFile{
 		Extra: []AgentConfig{
-			{ID: "aider", Name: "Aider", Command: "aider", UsePTY: true},
+			{ID: "aider", Name: "Aider", Command: "aider", UsePTY: BoolPtr(true)},
 		},
 	}
 	agents := ResolveAgents(file, nil)
@@ -197,5 +197,35 @@ func TestConfigDirXDG(t *testing.T) {
 	}
 	if got != filepath.Join(dir, "agent-fleet") {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestUsePTYExplicitFalse(t *testing.T) {
+	f := false
+	file := &FleetFile{
+		Agents: []AgentConfig{
+			{ID: AgentClaude, Name: "Claude", Command: "claude", UsePTY: &f},
+		},
+	}
+	agents := ResolveAgents(file, nil)
+	if len(agents) != 1 {
+		t.Fatalf("len %d", len(agents))
+	}
+	if agents[0].UsePTY == nil || *agents[0].UsePTY {
+		t.Fatalf("expected use_pty false, got %v", agents[0].UsePTY)
+	}
+}
+
+func TestUsePTYUnsetInheritsGlobal(t *testing.T) {
+	g := false
+	file := &FleetFile{
+		UsePTY: &g,
+		Agents: []AgentConfig{
+			{ID: AgentClaude, Name: "Claude", Command: "claude"}, // UsePTY unset
+		},
+	}
+	agents := ResolveAgents(file, nil)
+	if agents[0].UsePTY == nil || *agents[0].UsePTY {
+		t.Fatalf("expected inherit false, got %v", agents[0].UsePTY)
 	}
 }

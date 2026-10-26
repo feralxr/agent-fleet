@@ -1,6 +1,7 @@
 package process
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -119,4 +120,28 @@ func TestListReturnsSnapshots(t *testing.T) {
 	if live.Status != before {
 		t.Fatal("List exposed live pointer — status mutated")
 	}
+}
+
+func TestConcurrentAppendAndList(t *testing.T) {
+	m := NewManager(t.TempDir(), nil)
+	p := m.Get(config.AgentClaude)
+	if p == nil {
+		t.Fatal("nil")
+	}
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 200; i++ {
+			p.append(fmt.Sprintf("line-%d", i))
+		}
+		close(done)
+	}()
+	for i := 0; i < 200; i++ {
+		list := m.List()
+		if len(list) == 0 {
+			t.Fatal("empty")
+		}
+		_ = list[0].CurrentStatus()
+		_ = list[0].ActivityLabel()
+	}
+	<-done
 }
