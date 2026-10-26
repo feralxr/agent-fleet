@@ -49,6 +49,8 @@ type Session struct {
 	PromptHist  []string                `json:"prompt_history,omitempty"`
 	Named       map[string]NamedSession `json:"named_sessions,omitempty"`
 	Models      map[string]string       `json:"models,omitempty"` // agent id → model id
+	Notes       map[string]string       `json:"notes,omitempty"`  // agent id → note
+	Pins        map[string]string       `json:"pins,omitempty"`   // "1".."4" → template id
 }
 
 // NamedSession is a saved layout the user can restore later.

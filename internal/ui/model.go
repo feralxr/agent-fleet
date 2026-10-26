@@ -25,40 +25,43 @@ const (
 )
 
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Enter    key.Binding
-	Quit     key.Binding
-	Help     key.Binding
-	Start    key.Binding
-	Stop     key.Binding
-	StopAll  key.Binding
-	Restart  key.Binding
-	Clear    key.Binding
-	FocusIn  key.Binding
-	FocusOut key.Binding
-	Copy     key.Binding
-	Cwd      key.Binding
-	Split    key.Binding
-	Worktree key.Binding
-	Fan      key.Binding
-	Jump     key.Binding
-	Diff     key.Binding
-	Reload   key.Binding
-	SaveName key.Binding
-	LoadName key.Binding
-	HistUp   key.Binding
-	HistDown key.Binding
-	ModelSel key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	Enter        key.Binding
+	Quit         key.Binding
+	Help         key.Binding
+	Start        key.Binding
+	Stop         key.Binding
+	StopAll      key.Binding
+	Restart      key.Binding
+	Clear        key.Binding
+	FocusIn      key.Binding
+	FocusOut     key.Binding
+	Copy         key.Binding
+	Cwd          key.Binding
+	Split        key.Binding
+	Worktree     key.Binding
+	Fan          key.Binding
+	Jump         key.Binding
+	Diff         key.Binding
+	Reload       key.Binding
+	SaveName     key.Binding
+	LoadName     key.Binding
+	HistUp       key.Binding
+	HistDown     key.Binding
+	ModelSel     key.Binding
 	Resend       key.Binding
 	Export       key.Binding
 	ToggleTarget key.Binding
 	Templates    key.Binding
 	FocusMode    key.Binding
+	Note         key.Binding
+	Compare      key.Binding
+	PinFire      key.Binding
 	PgUp         key.Binding
-	PgDown   key.Binding
-	HalfUp   key.Binding
-	HalfDown key.Binding
+	PgDown       key.Binding
+	HalfUp       key.Binding
+	HalfDown     key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -183,6 +186,18 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("z"),
 			key.WithHelp("z", "focus mode"),
 		),
+		Note: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "agent note"),
+		),
+		Compare: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "compare outputs"),
+		),
+		PinFire: key.NewBinding(
+			key.WithKeys("'"),
+			key.WithHelp("'", "pinned template"),
+		),
 		PgUp: key.NewBinding(
 			key.WithKeys("pgup", "ctrl+b"),
 			key.WithHelp("pgup", "scroll up"),
@@ -244,8 +259,11 @@ type Model struct {
 	tmplMode     bool
 	tmplIdx      int
 	focusMode    bool
+	noteMode     bool
+	compareMode  bool
+	pinArm       bool // waiting for 1-4 after '
 	fanTargets   map[config.AgentID]bool
-	histIdx      int  // -1 = not browsing history
+	histIdx      int // -1 = not browsing history
 	statusMsg    string
 	lastTick     time.Time
 	ready        bool
@@ -415,6 +433,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.tmplMode {
 		return m.updateTemplatePicker(msg)
+	}
+	if m.pinArm && key.Matches(msg, m.keys.FocusOut) {
+		m.pinArm = false
+		m.statusMsg = "pin cancelled"
+		return m, nil
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -614,8 +637,31 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case msg.String() >= "1" && msg.String() <= "9":
-		// Jump to agent by number (1-indexed)
 		n := int(msg.String()[0] - '0')
+		if m.pinArm && n >= 1 && n <= 4 {
+			m.pinArm = false
+			slot := msg.String()
+			id := ""
+			if m.session.Pins != nil {
+				id = m.session.Pins[slot]
+			}
+			if id == "" {
+				m.statusMsg = fmt.Sprintf("pin %s empty — T then %s to pin a template", slot, slot)
+				return m, nil
+			}
+			body, label, ok := templateByID(id)
+			if !ok {
+				m.statusMsg = fmt.Sprintf("pin %s invalid: %s", slot, id)
+				return m, nil
+			}
+			m.inputFocus = true
+			m.input.SetValue(body)
+			m.input.Focus()
+			m.layout()
+			m.statusMsg = fmt.Sprintf("pin %s · /%s (%s)", slot, id, label)
+			return m, textarea.Blink
+		}
+		m.pinArm = false
 		if n >= 1 && n <= len(m.agents) {
 			m.selected = n - 1
 			m.activeID = m.agents[m.selected].ID
@@ -665,6 +711,56 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "focus mode off"
 		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Note):
+		if len(m.agents) == 0 {
+			return m, nil
+		}
+		id := m.agents[m.selected].ID
+		cur := ""
+		if m.session.Notes != nil {
+			cur = m.session.Notes[string(id)]
+		}
+		m.noteMode = true
+		m.inputFocus = true
+		m.input.SetValue(cur)
+		m.input.Placeholder = "Note for this agent — Enter save, Esc cancel"
+		m.input.Focus()
+		m.layout()
+		m.statusMsg = fmt.Sprintf("note · %s", m.agents[m.selected].Name)
+		return m, textarea.Blink
+
+	case key.Matches(msg, m.keys.Compare):
+		m.compareMode = !m.compareMode
+		if m.compareMode {
+			m.split = true
+			m.focusMode = false
+			m.layout()
+			m.outFP = ""
+			m.outFP2 = ""
+			m.refreshViewport()
+			m.statusMsg = "compare on — selected + neighbor"
+		} else {
+			m.statusMsg = "compare off"
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.PinFire):
+		m.pinArm = true
+		parts := []string{}
+		if m.session.Pins != nil {
+			for _, k := range []string{"1", "2", "3", "4"} {
+				if v := m.session.Pins[k]; v != "" {
+					parts = append(parts, k+"="+v)
+				}
+			}
+		}
+		summary := "empty"
+		if len(parts) > 0 {
+			summary = strings.Join(parts, " ")
+		}
+		m.statusMsg = fmt.Sprintf("pin 1-4 (%s)", summary)
 		return m, nil
 
 	case key.Matches(msg, m.keys.FocusIn):
@@ -757,6 +853,28 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			return m, nil
+		}
+
+		if m.noteMode {
+			id := m.agents[m.selected].ID
+			if m.session.Notes == nil {
+				m.session.Notes = map[string]string{}
+			}
+			if text == "" {
+				delete(m.session.Notes, string(id))
+				m.statusMsg = "note cleared"
+			} else {
+				m.session.Notes[string(id)] = text
+				m.statusMsg = fmt.Sprintf("note saved · %s", m.agents[m.selected].Name)
+			}
+			_ = config.SaveSession(m.session)
+			m.noteMode = false
+			m.inputFocus = false
+			m.input.Blur()
+			m.input.Reset()
+			m.input.Placeholder = "i  focus  ·  enter  send  ·  esc  cancel"
+			m.layout()
 			return m, nil
 		}
 
@@ -1054,7 +1172,6 @@ func (m *Model) refreshDiffCacheLazy() {
 	}
 }
 
-
 func (m Model) resendLastPrompt() (tea.Model, tea.Cmd) {
 	if len(m.session.PromptHist) == 0 {
 		m.statusMsg = "no prompt history"
@@ -1219,6 +1336,15 @@ func (m Model) updateTemplatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.layout()
 		m.statusMsg = fmt.Sprintf("template /%s — edit or Enter to send", tmpl.ID)
 		return m, textarea.Blink
+	case msg.String() >= "1" && msg.String() <= "4":
+		tmpl := promptTemplates[m.tmplIdx]
+		if m.session.Pins == nil {
+			m.session.Pins = map[string]string{}
+		}
+		m.session.Pins[msg.String()] = tmpl.ID
+		_ = config.SaveSession(m.session)
+		m.statusMsg = fmt.Sprintf("pinned /%s to slot %s", tmpl.ID, msg.String())
+		return m, nil
 	}
 	return m, nil
 }
@@ -1328,10 +1454,18 @@ func (m *Model) refreshViewport() {
 	m.renderAgentInto(&m.viewport, &m.lastContent, m.activeID)
 
 	if m.split {
-		// Secondary pane: previous agent in list, or next if at top.
-		secIdx := m.selected - 1
-		if secIdx < 0 {
-			secIdx = m.selected + 1
+		secIdx := m.selected + 1
+		if !m.compareMode {
+			secIdx = m.selected - 1
+			if secIdx < 0 {
+				secIdx = m.selected + 1
+			}
+		}
+		if secIdx >= len(m.agents) {
+			secIdx = 0
+		}
+		if secIdx == m.selected && len(m.agents) > 1 {
+			secIdx = (m.selected + 1) % len(m.agents)
 		}
 		if secIdx >= 0 && secIdx < len(m.agents) {
 			m.renderAgentInto(&m.viewport2, &m.lastContent2, m.agents[secIdx].ID)
@@ -1493,6 +1627,15 @@ func (m Model) View() string {
 	if m.focusMode {
 		badges = append(badges, "focus")
 	}
+	if m.compareMode {
+		badges = append(badges, "compare")
+	}
+	if m.noteMode {
+		badges = append(badges, "note")
+	}
+	if m.pinArm {
+		badges = append(badges, "pin")
+	}
 	if len(m.fanTargets) > 0 {
 		badges = append(badges, fmt.Sprintf("fan:%d", len(m.fanTargets)))
 	}
@@ -1593,6 +1736,9 @@ func (m Model) View() string {
 	case m.nameMode:
 		inputBorderColor = lipgloss.Color("#A78BFA")
 		inputLabel = selectedStyle.Render(" session ")
+	case m.noteMode:
+		inputBorderColor = lipgloss.Color("#FBBF24")
+		inputLabel = statusMiss.Render(" note ")
 	case m.inputFocus:
 		inputBorderColor = lipgloss.Color("#8B5CF6")
 		inputLabel = selectedStyle.Render(" input ")
@@ -1645,7 +1791,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		helpView = m.help.View(m.keys)
 	} else {
-		helpView = subtleStyle.Render(" ? help · T tmpl · t target · z focus · m model · p resend · e export")
+		helpView = subtleStyle.Render(" ? · T tmpl · n note · o compare · z focus · m model · p resend")
 	}
 
 	if m.tmplMode {
@@ -1777,6 +1923,17 @@ func (m Model) renderAgentList() string {
 			}
 			st += a.Model
 		}
+		if m.session.Notes != nil {
+			if note := m.session.Notes[string(a.ID)]; note != "" {
+				if len(note) > 18 {
+					note = note[:16] + "…"
+				}
+				if st != "" {
+					st += " · "
+				}
+				st += "note:" + note
+			}
+		}
 		if a.Status == process.StatusRunning || a.Status == process.StatusWaiting {
 			act := a.ActivityLabel()
 			if act != "" {
@@ -1808,7 +1965,6 @@ func (m Model) renderAgentList() string {
 	b.WriteString(subtleStyle.Render(" p resend  e export") + "\n")
 	return b.String()
 }
-
 
 // Styles — dark violet cockpit palette
 var (
@@ -1857,4 +2013,3 @@ var (
 	activeBar   = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true)
 	selectedRow = lipgloss.NewStyle().Background(lipgloss.Color("#1A1229"))
 )
-

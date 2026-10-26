@@ -39,3 +39,12 @@ func expandTemplate(text string) (string, string, bool) {
 	}
 	return text, "", false
 }
+
+func templateByID(id string) (body string, label string, ok bool) {
+	for _, tmpl := range promptTemplates {
+		if tmpl.ID == id {
+			return tmpl.Body, tmpl.Label, true
+		}
+	}
+	return "", "", false
+}

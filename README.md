@@ -97,6 +97,10 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 | `t` | Toggle fan-out target |
 | `T` | Prompt templates |
 | `z` | Focus mode (hide sidebar) |
+| `n` | Edit note for selected agent |
+| `o` | Compare selected + neighbor outputs |
+| `'` then `1`-`4` | Insert pinned template |
+| In `T` picker, `1`-`4` | Pin template to slot |
 | `e` | Export agent output to log file |
 | `s` | Start |
 | `x` | Stop |
@@ -121,6 +125,20 @@ See [docs/demo.md](docs/demo.md) for a layout walkthrough.
 | `S` / `L` | Save / load named session |
 | `?` | Help |
 | `q` | Quit |
+
+## Prompt templates & pins
+
+| Input | Expands to |
+|-------|------------|
+| `/review` | Code review prompt |
+| `/tests` | Add unit tests |
+| `/explain` | Architecture explanation |
+| `/diff` | Summarize git risk |
+| `/commit` | Conventional commit message |
+| `/refactor` `/fix` `/docs` | More workflows |
+
+Pin: open **`T`**, select a template, press **`1`–`4`**.  
+Fire: **`'`** then **`1`–`4`**.
 
 ## Configuration (`fleet.toml`)
 

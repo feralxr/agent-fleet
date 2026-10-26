@@ -72,7 +72,7 @@ func NewManager(cwd string, session *config.Session) *Manager {
 		p := &AgentProcess{
 			ID: a.ID, Name: a.Name, Status: StatusIdle, UsePTY: a.UsePTY,
 			Output: make([]string, 0, 128),
-			Model: a.Model,
+			Model:  a.Model,
 		}
 		if session != nil {
 			if session.Worktrees != nil {
@@ -638,7 +638,6 @@ func (p *AgentProcess) ActivityLabel() string {
 		return string(p.Status)
 	}
 }
-
 
 // SetModel sets the model for an agent (applied on next Start).
 func (m *Manager) SetModel(id config.AgentID, model string) {
