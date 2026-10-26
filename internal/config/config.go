@@ -187,11 +187,16 @@ func slugify(s string) string {
 }
 
 func ConfigDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	// Prefer XDG_CONFIG_HOME when set (Linux/tests), else ~/.config
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".config")
 	}
-	dir := filepath.Join(home, ".config", "agent-fleet")
+	dir := filepath.Join(base, "agent-fleet")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

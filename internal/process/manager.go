@@ -429,20 +429,31 @@ func (m *Manager) SetWorktree(id config.AgentID, path string) {
 
 func (m *Manager) Worktree(id config.AgentID) string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if p, ok := m.agents[id]; ok {
-		return p.WorktreePath
+	p := m.agents[id]
+	m.mu.RUnlock()
+	if p == nil {
+		return ""
 	}
-	return ""
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.WorktreePath
 }
 
 func (m *Manager) EffectiveCwd(id config.AgentID) string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if p, ok := m.agents[id]; ok && p.WorktreePath != "" {
-		return p.WorktreePath
+	p := m.agents[id]
+	cwd := m.cwd
+	m.mu.RUnlock()
+	if p == nil {
+		return cwd
 	}
-	return m.cwd
+	p.mu.Lock()
+	wt := p.WorktreePath
+	p.mu.Unlock()
+	if wt != "" {
+		return wt
+	}
+	return cwd
 }
 
 func (m *Manager) SetCwd(cwd string) {
@@ -461,6 +472,27 @@ func (p *AgentProcess) LastError() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.lastErr
+}
+
+// CurrentStatus is a race-safe status read for live agent pointers.
+func (p *AgentProcess) CurrentStatus() Status {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Status
+}
+
+// IsLive reports whether the agent process is running or waiting.
+func (p *AgentProcess) IsLive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Status == StatusRunning || p.Status == StatusWaiting
+}
+
+// CurrentModel is a race-safe model id read.
+func (p *AgentProcess) CurrentModel() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Model
 }
 
 func (p *AgentProcess) SnapshotOutput() []string {
@@ -493,6 +525,8 @@ func (p *AgentProcess) NeedsAttention() bool {
 }
 
 func (p *AgentProcess) ShortPath() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.CmdPath == "" {
 		return ""
 	}
@@ -701,21 +735,28 @@ func (p *AgentProcess) ActivityLabel() string {
 
 // SetModel sets the model for an agent (applied on next Start).
 func (m *Manager) SetModel(id config.AgentID, model string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if p, ok := m.agents[id]; ok {
-		p.Model = strings.TrimSpace(model)
+	m.mu.RLock()
+	p := m.agents[id]
+	m.mu.RUnlock()
+	if p == nil {
+		return
 	}
+	p.mu.Lock()
+	p.Model = strings.TrimSpace(model)
+	p.mu.Unlock()
 }
 
 // GetModel returns the selected model for an agent.
 func (m *Manager) GetModel(id config.AgentID) string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if p, ok := m.agents[id]; ok {
-		return p.Model
+	p := m.agents[id]
+	m.mu.RUnlock()
+	if p == nil {
+		return ""
 	}
-	return ""
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Model
 }
 
 // ModelsFor returns the catalog for an agent: live CLI list + config + defaults.

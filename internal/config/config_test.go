@@ -145,3 +145,57 @@ func TestSessionNotesAndPinsRoundTrip(t *testing.T) {
 		t.Fatalf("models %v", got.Models)
 	}
 }
+
+func TestResolveAgentsEnvOverride(t *testing.T) {
+	t.Setenv("FLEET_CLAUDE_CMD", "/custom/claude")
+	agents := ResolveAgents(nil, nil)
+	var found bool
+	for _, a := range agents {
+		if a.ID == AgentClaude {
+			found = true
+			if a.Command != "/custom/claude" {
+				t.Fatalf("command %s", a.Command)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("claude missing")
+	}
+}
+
+func TestResolveAgentsExtraAndDedup(t *testing.T) {
+	f := &FleetFile{
+		Extra: []AgentConfig{
+			{ID: "aider", Name: "Aider", Command: "aider"},
+			{ID: "claude", Name: "Claude Override", Command: "claude-custom"},
+		},
+	}
+	agents := ResolveAgents(f, nil)
+	var aider, claude *AgentConfig
+	for i := range agents {
+		if agents[i].ID == "aider" {
+			aider = &agents[i]
+		}
+		if agents[i].ID == AgentClaude {
+			claude = &agents[i]
+		}
+	}
+	if aider == nil {
+		t.Fatal("extra agent missing")
+	}
+	if claude == nil || claude.Command != "claude-custom" {
+		t.Fatalf("dedup override failed: %+v", claude)
+	}
+}
+
+func TestConfigDirXDG(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	got, err := ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(dir, "agent-fleet") {
+		t.Fatalf("got %s", got)
+	}
+}

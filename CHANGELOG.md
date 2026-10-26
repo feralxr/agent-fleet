@@ -10,6 +10,9 @@ Stability-focused release: richer agentic UX, cleaner structure, safer session p
 - Templates: structured bodies (`/plan`, `/pr` added)
 - Stream: CR/CRLF split for agent TUI redraws
 - Fan-out status lists target agent names
+- Race-safe accessors (`CurrentStatus`/`IsLive`/`GetModel`); List snapshots
+- XDG_CONFIG_HOME for config dir; richer ResolveAgents tests
+- CI race + cross-compile matrix
 
 ### Features
 - **Command palette** (`:`) — filter and run start/stop/model/templates/worktree/fan-out/…

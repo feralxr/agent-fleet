@@ -465,7 +465,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("set %s, live switch: %v", text, err)
 			} else {
 				st := m.manager.Get(id)
-				if st != nil && (st.Status == process.StatusRunning || st.Status == process.StatusWaiting) {
+				if st != nil && st.IsLive() {
 					m.statusMsg = fmt.Sprintf("%s → %s (sent /model)", m.agents[m.selected].Name, text)
 				} else {
 					m.statusMsg = fmt.Sprintf("%s → %s (next start)", m.agents[m.selected].Name, text)
@@ -719,7 +719,7 @@ func (m Model) resendLastPrompt() (tea.Model, tea.Cmd) {
 	text := m.session.PromptHist[len(m.session.PromptHist)-1]
 	id := m.agents[m.selected].ID
 	p := m.manager.Get(id)
-	if p == nil || (p.Status != process.StatusRunning && p.Status != process.StatusWaiting) {
+	if p == nil || !p.IsLive() {
 		m.statusMsg = "start the agent before resending"
 		return m, nil
 	}
@@ -834,7 +834,7 @@ func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("set %s, live switch: %v", choice, err)
 		} else {
 			st := m.manager.Get(id)
-			if st != nil && (st.Status == process.StatusRunning || st.Status == process.StatusWaiting) {
+			if st != nil && st.IsLive() {
 				m.statusMsg = fmt.Sprintf("%s → %s (sent /model to live session)", m.agents[m.selected].Name, choice)
 			} else {
 				m.statusMsg = fmt.Sprintf("%s → %s (will use on next start)", m.agents[m.selected].Name, choice)

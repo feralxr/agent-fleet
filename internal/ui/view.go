@@ -367,7 +367,7 @@ func (m Model) View() string {
 	chip := ""
 	if p := m.manager.Get(m.activeID); p != nil {
 		st := statusIdle
-		switch p.Status {
+		switch p.CurrentStatus() {
 		case process.StatusRunning:
 			st = statusRun
 		case process.StatusWaiting:
