@@ -420,6 +420,26 @@ func (m *Manager) SetPTYSize(id config.AgentID, rows, cols uint16) {
 	}
 }
 
+// SetPTYSizeAll resizes every live PTY session (window resize).
+func (m *Manager) SetPTYSizeAll(rows, cols uint16) {
+	if rows == 0 || cols == 0 {
+		return
+	}
+	m.mu.RLock()
+	agents := make([]*AgentProcess, 0, len(m.agents))
+	for _, p := range m.agents {
+		agents = append(agents, p)
+	}
+	m.mu.RUnlock()
+	for _, p := range agents {
+		p.mu.Lock()
+		if p.ptmx != nil && (p.Status == StatusRunning || p.Status == StatusWaiting) {
+			_ = pty.Setsize(p.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+		}
+		p.mu.Unlock()
+	}
+}
+
 func (m *Manager) ClearOutput(id config.AgentID) {
 	m.mu.RLock()
 	p := m.agents[id]
@@ -454,11 +474,15 @@ func (m *Manager) NextNeedingAttention(afterID config.AgentID) config.AgentID {
 }
 
 func (m *Manager) SetWorktree(id config.AgentID, path string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if p, ok := m.agents[id]; ok {
-		p.WorktreePath = path
+	m.mu.RLock()
+	p := m.agents[id]
+	m.mu.RUnlock()
+	if p == nil {
+		return
 	}
+	p.mu.Lock()
+	p.WorktreePath = path
+	p.mu.Unlock()
 }
 
 func (m *Manager) Worktree(id config.AgentID) string {
@@ -643,7 +667,28 @@ func dropCR(data []byte) []byte {
 }
 
 func (m *Manager) wait(p *AgentProcess) {
-	err := p.cmd.Wait()
+	p.mu.Lock()
+	cmd := p.cmd
+	cancel := p.cancel
+	p.mu.Unlock()
+	if cmd == nil {
+		select {
+		case <-p.done:
+		default:
+			close(p.done)
+		}
+		return
+	}
+	err := cmd.Wait()
+	// Was this an intentional Stop?
+	cancelled := false
+	if cancel != nil {
+		select {
+		case <-cancel:
+			cancelled = true
+		default:
+		}
+	}
 	p.mu.Lock()
 	if p.stdin != nil {
 		_ = p.stdin.Close()
@@ -653,12 +698,17 @@ func (m *Manager) wait(p *AgentProcess) {
 		_ = p.ptmx.Close()
 		p.ptmx = nil
 	}
+	// Only transition if still live — Stop may already have set Stopped.
 	if p.Status == StatusRunning || p.Status == StatusWaiting {
-		if err != nil {
+		switch {
+		case cancelled:
+			p.Status = StatusStopped
+			// Stop() appends "[fleet] stopped"; avoid duplicate noise here.
+		case err != nil:
 			p.Status = StatusError
 			p.lastErr = err.Error()
 			p.Output = append(p.Output, fmt.Sprintf("[fleet] exited with error: %v", err))
-		} else {
+		default:
 			p.Status = StatusStopped
 			p.Output = append(p.Output, "[fleet] exited cleanly")
 		}
@@ -795,7 +845,9 @@ func (m *Manager) GetModel(id config.AgentID) string {
 
 // ModelsFor returns the catalog for an agent: live CLI list + config + defaults.
 func (m *Manager) ModelsFor(id config.AgentID) []string {
+	m.mu.RLock()
 	cfg := m.findConfig(id)
+	m.mu.RUnlock()
 	var live []string
 	if cfg != nil {
 		live = DiscoverModels(*cfg)
@@ -805,7 +857,9 @@ func (m *Manager) ModelsFor(id config.AgentID) []string {
 
 // ModelsForDefaultsOnly skips live CLI discovery (for instant UI).
 func (m *Manager) ModelsForDefaultsOnly(id config.AgentID) []string {
+	m.mu.RLock()
 	cfg := m.findConfig(id)
+	m.mu.RUnlock()
 	return MergeModels(id, cfg, nil)
 }
 
@@ -843,24 +897,6 @@ func (m *Manager) StopAll() int {
 		}
 	}
 	return n
-}
-
-func looksLikePrompt(line string) bool {
-	s := strings.TrimSpace(strings.ToLower(line))
-	if s == "" {
-		return false
-	}
-	patterns := []string{
-		"y/n", "(y/n)", "[y/n]", "yes/no", "allow?", "approve", "permission",
-		"press enter", "continue?", "confirm", "waiting for", "your input",
-		"do you want", "shall i", "may i", "ok to", "proceed?",
-	}
-	for _, ptn := range patterns {
-		if strings.Contains(s, ptn) {
-			return true
-		}
-	}
-	return strings.HasSuffix(s, "?") && len(s) < 120
 }
 
 func stripANSI(s string) string {

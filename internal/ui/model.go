@@ -183,16 +183,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 		m.layout()
-		// Keep PTY size roughly aligned with the output pane
+		// Keep all live PTYs aligned with the output pane
 		rows := uint16(m.viewport.Height)
 		cols := uint16(m.viewport.Width)
 		if rows > 0 && cols > 0 {
-			m.manager.SetPTYSize(m.activeID, rows, cols)
+			m.manager.SetPTYSizeAll(rows, cols)
 		}
 		return m, nil
 
 	case tickMsg:
 		m.agents = m.manager.List()
+		if len(m.agents) == 0 {
+			m.selected = 0
+			m.activeID = ""
+		} else if m.selected >= len(m.agents) {
+			m.selected = len(m.agents) - 1
+			m.activeID = m.agents[m.selected].ID
+		}
 		// At most one git status refresh per tick (never from View)
 		m.refreshDiffCacheLazy()
 		// Only re-render panes when agent output actually changed

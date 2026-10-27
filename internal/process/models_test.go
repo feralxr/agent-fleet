@@ -31,3 +31,21 @@ func TestModelCacheTTL(t *testing.T) {
 	}
 	_ = list
 }
+
+func TestMergeModelsDedupOrder(t *testing.T) {
+	cfg := &config.AgentConfig{ID: config.AgentOpenCode, Models: []string{"live-a", "cfg-only"}}
+	got := MergeModels(config.AgentOpenCode, cfg, []string{"live-a", "live-b"})
+	if len(got) < 2 || got[0] != "live-a" || got[1] != "live-b" {
+		t.Fatalf("got %v", got)
+	}
+	// cfg-only should appear after live
+	found := false
+	for _, m := range got {
+		if m == "cfg-only" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing cfg-only in %v", got)
+	}
+}

@@ -13,6 +13,10 @@ Stability-focused release: richer agentic UX, cleaner structure, safer session p
 - Race-safe accessors (`CurrentStatus`/`IsLive`/`GetModel`); List snapshots
 - XDG_CONFIG_HOME for config dir; richer ResolveAgents tests
 - CI race + cross-compile matrix
+- Intentional Stop no longer reported as process error
+- Resize all live PTYs on terminal resize
+- Atomic session.json writes (temp + rename)
+- Send rejects empty prompts; tick clamps selection
 
 ### Features
 - **Command palette** (`:`) — filter and run start/stop/model/templates/worktree/fan-out/…

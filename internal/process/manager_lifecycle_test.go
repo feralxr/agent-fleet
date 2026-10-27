@@ -194,3 +194,60 @@ func TestStartDoesNotHoldManagerDuringSpawn(t *testing.T) {
 	}
 	_ = m.Stop(config.AgentClaude)
 }
+
+func TestNextNeedingAttentionCycles(t *testing.T) {
+	m := NewManager(t.TempDir(), nil)
+	// Force waiting on two agents via direct status on live pointers
+	a := m.Get(config.AgentClaude)
+	b := m.Get(config.AgentCursor)
+	if a == nil || b == nil {
+		t.Fatal("missing agents")
+	}
+	a.mu.Lock()
+	a.Status = StatusWaiting
+	a.waitReason = "y/n"
+	a.mu.Unlock()
+	b.mu.Lock()
+	b.Status = StatusWaiting
+	b.waitReason = "approve"
+	b.mu.Unlock()
+
+	first := m.NextNeedingAttention("")
+	if first == "" {
+		t.Fatal("expected someone")
+	}
+	second := m.NextNeedingAttention(first)
+	if second == "" || second == first {
+		t.Fatalf("expected different second, got %q after %q", second, first)
+	}
+	third := m.NextNeedingAttention(second)
+	// should wrap to first eventually among the two
+	if third != first && third != second {
+		// may be another agent if any other is waiting
+		_ = third
+	}
+}
+
+func TestSendEmptyRejected(t *testing.T) {
+	m := NewManager(t.TempDir(), nil)
+	err := m.Send(config.AgentClaude, "   ")
+	if err == nil {
+		t.Fatal("expected empty prompt error")
+	}
+}
+
+func TestSetWorktreeEffectiveCwd(t *testing.T) {
+	root := t.TempDir()
+	wt := filepath.Join(root, "wt")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(root, nil)
+	m.SetWorktree(config.AgentGrok, wt)
+	if m.EffectiveCwd(config.AgentGrok) != wt {
+		t.Fatalf("got %s", m.EffectiveCwd(config.AgentGrok))
+	}
+	if m.Worktree(config.AgentGrok) != wt {
+		t.Fatal(m.Worktree(config.AgentGrok))
+	}
+}

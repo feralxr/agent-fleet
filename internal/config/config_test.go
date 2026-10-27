@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -227,5 +228,28 @@ func TestUsePTYUnsetInheritsGlobal(t *testing.T) {
 	agents := ResolveAgents(file, nil)
 	if agents[0].UsePTY == nil || *agents[0].UsePTY {
 		t.Fatalf("expected inherit false, got %v", agents[0].UsePTY)
+	}
+}
+
+func TestSaveSessionAtomic(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	s := Session{LastCwd: "/tmp/x", PromptHist: []string{"a", "b"}}
+	if err := SaveSession(s); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSession()
+	if got.LastCwd != "/tmp/x" || len(got.PromptHist) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	// no leftover temps
+	entries, err := os.ReadDir(filepath.Join(dir, "agent-fleet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Fatalf("leftover temp %s", e.Name())
+		}
 	}
 }

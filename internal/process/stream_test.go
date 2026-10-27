@@ -37,3 +37,32 @@ func TestScanLinesCR(t *testing.T) {
 		}
 	}
 }
+
+func TestStripANSI_OSCAndLong(t *testing.T) {
+	// OSC title sequence BEL-terminated
+	in := "\x1b]0;title\x07hello"
+	out := stripANSI(in)
+	if out != "hello" {
+		t.Fatalf("got %q", out)
+	}
+	// CSI colors mixed
+	in2 := "\x1b[1;32mOK\x1b[0m done"
+	out2 := stripANSI(in2)
+	if out2 != "OK done" {
+		t.Fatalf("got %q", out2)
+	}
+}
+
+func TestScanLinesCRPartialAtEOF(t *testing.T) {
+	sc := bufio.NewScanner(strings.NewReader("no-newline-at-end"))
+	sc.Split(scanLinesCR)
+	if !sc.Scan() {
+		t.Fatal("expected token")
+	}
+	if sc.Text() != "no-newline-at-end" {
+		t.Fatalf("got %q", sc.Text())
+	}
+	if sc.Scan() {
+		t.Fatal("extra token")
+	}
+}

@@ -48,3 +48,17 @@ func TestMergePinSlots(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandPlanAndPR(t *testing.T) {
+	body, id, ok := expandTemplate("/plan")
+	if !ok || id != "plan" || len(body) < 40 {
+		t.Fatalf("plan: ok=%v id=%s len=%d", ok, id, len(body))
+	}
+	body, id, ok = expandTemplate("/pr ship the fleet UI")
+	if !ok || id != "pr" {
+		t.Fatalf("pr: ok=%v id=%s", ok, id)
+	}
+	if body == "" || body == "ship the fleet UI" {
+		t.Fatalf("expected expanded body, got %q", body)
+	}
+}
