@@ -493,15 +493,11 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.pathMode {
-			// Change working directory
-			st, err := os.Stat(text)
+			abs := expandPath(text)
+			st, err := os.Stat(abs)
 			if err != nil || !st.IsDir() {
-				m.statusMsg = fmt.Sprintf("invalid directory: %s", text)
+				m.statusMsg = fmt.Sprintf("invalid directory: %s", abs)
 				return m, nil
-			}
-			abs, err := filepath.Abs(text)
-			if err != nil {
-				abs = text
 			}
 			m.manager.SetCwd(abs)
 			m.session.LastCwd = abs
@@ -716,6 +712,13 @@ func (m Model) resendLastPrompt() (tea.Model, tea.Cmd) {
 		m.statusMsg = "no prompt history"
 		return m, nil
 	}
+	if len(m.agents) == 0 {
+		m.statusMsg = "no agents loaded"
+		return m, nil
+	}
+	if m.selected < 0 || m.selected >= len(m.agents) {
+		m.selected = 0
+	}
 	text := m.session.PromptHist[len(m.session.PromptHist)-1]
 	id := m.agents[m.selected].ID
 	p := m.manager.Get(id)
@@ -891,6 +894,13 @@ func (m Model) updateTemplatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
+	if len(m.agents) == 0 {
+		m.statusMsg = "no agents loaded"
+		return m, nil
+	}
+	if m.selected < 0 || m.selected >= len(m.agents) {
+		m.selected = 0
+	}
 	cwd := m.manager.Cwd()
 	if !gitutil.IsRepo(cwd) {
 		m.statusMsg = "not a git repo — worktrees need a repository"
@@ -902,6 +912,11 @@ func (m Model) ensureWorktree() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	id := m.agents[m.selected].ID
+	// Refuse while agent is live — process cwd is fixed at start
+	if p := m.manager.Get(id); p != nil && p.IsLive() {
+		m.statusMsg = "stop the agent before switching worktree"
+		return m, nil
+	}
 	wt, err := gitutil.EnsureWorktree(root, string(id))
 	if err != nil {
 		m.statusMsg = fmt.Sprintf("worktree failed: %v", err)

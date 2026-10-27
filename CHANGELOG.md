@@ -17,6 +17,8 @@ Stability-focused release: richer agentic UX, cleaner structure, safer session p
 - Resize all live PTYs on terminal resize
 - Atomic session.json writes (temp + rename)
 - Send rejects empty prompts; tick clamps selection
+- Path input expands `~` and `$ENV`; export writes `.fleet/exports/` + clipboard
+- Worktree blocked while agent is live; Start pipe failures set error status
 
 ### Features
 - **Command palette** (`:`) — filter and run start/stop/model/templates/worktree/fan-out/…

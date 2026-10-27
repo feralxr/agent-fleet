@@ -268,20 +268,26 @@ func (m *Manager) Start(id config.AgentID) error {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		p.Status = StatusError
+		p.lastErr = err.Error()
 		p.mu.Unlock()
 		return fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
+		p.Status = StatusError
+		p.lastErr = err.Error()
 		p.mu.Unlock()
-		return err
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
+		p.Status = StatusError
+		p.lastErr = err.Error()
 		p.mu.Unlock()
-		return err
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
