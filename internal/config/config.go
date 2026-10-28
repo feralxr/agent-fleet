@@ -60,6 +60,9 @@ type NamedSession struct {
 	ActiveID   AgentID           `json:"active_id"`
 	Worktrees  map[string]string `json:"worktrees,omitempty"`
 	PromptHist []string          `json:"prompt_history,omitempty"`
+	Models     map[string]string `json:"models,omitempty"`
+	Notes      map[string]string `json:"notes,omitempty"`
+	Pins       map[string]string `json:"pins,omitempty"`
 }
 
 // LoadFleetFile reads fleet.toml from search paths.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -626,13 +627,38 @@ func (m *Model) pushPrompt(text string) {
 }
 
 func (m *Model) saveNamedSession(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.statusMsg = "session name empty"
+		return
+	}
+	if len(name) > 64 {
+		name = name[:64]
+	}
 	if m.session.Named == nil {
 		m.session.Named = map[string]config.NamedSession{}
 	}
 	wts := map[string]string{}
+	models := map[string]string{}
 	for _, a := range m.agents {
 		if wt := m.manager.Worktree(a.ID); wt != "" {
 			wts[string(a.ID)] = wt
+		}
+		if mod := m.manager.GetModel(a.ID); mod != "" {
+			models[string(a.ID)] = mod
+		}
+	}
+	// Snapshot notes/pins from live session maps
+	notes := map[string]string{}
+	if m.session.Notes != nil {
+		for k, v := range m.session.Notes {
+			notes[k] = v
+		}
+	}
+	pins := map[string]string{}
+	if m.session.Pins != nil {
+		for k, v := range m.session.Pins {
+			pins[k] = v
 		}
 	}
 	m.session.Named[name] = config.NamedSession{
@@ -640,6 +666,9 @@ func (m *Model) saveNamedSession(name string) {
 		ActiveID:   m.activeID,
 		Worktrees:  wts,
 		PromptHist: append([]string{}, m.session.PromptHist...),
+		Models:     models,
+		Notes:      notes,
+		Pins:       pins,
 	}
 	_ = config.SaveSession(m.session)
 	m.statusMsg = fmt.Sprintf("saved session %q", name)
@@ -650,20 +679,11 @@ func (m Model) loadNamedSessionCycle() (tea.Model, tea.Cmd) {
 		m.statusMsg = "no named sessions — press S to save one"
 		return m, nil
 	}
-	// Deterministic order
 	names := make([]string, 0, len(m.session.Named))
 	for n := range m.session.Named {
 		names = append(names, n)
 	}
-	// sort
-	for i := 0; i < len(names); i++ {
-		for j := i + 1; j < len(names); j++ {
-			if names[j] < names[i] {
-				names[i], names[j] = names[j], names[i]
-			}
-		}
-	}
-	// Pick next after current status hint or first
+	sort.Strings(names)
 	pick := names[0]
 	if strings.HasPrefix(m.statusMsg, "loaded session ") {
 		cur := strings.TrimPrefix(m.statusMsg, "loaded session ")
@@ -680,12 +700,38 @@ func (m Model) loadNamedSessionCycle() (tea.Model, tea.Cmd) {
 		if st, err := os.Stat(ns.Cwd); err == nil && st.IsDir() {
 			m.manager.SetCwd(ns.Cwd)
 			m.session.LastCwd = ns.Cwd
+		} else {
+			m.statusMsg = fmt.Sprintf("session %q: cwd missing (%s)", pick, ns.Cwd)
 		}
 	}
 	if ns.Worktrees != nil {
-		m.session.Worktrees = ns.Worktrees
+		m.session.Worktrees = map[string]string{}
 		for id, wt := range ns.Worktrees {
-			m.manager.SetWorktree(config.AgentID(id), wt)
+			if st, err := os.Stat(wt); err == nil && st.IsDir() {
+				m.manager.SetWorktree(config.AgentID(id), wt)
+				m.session.Worktrees[id] = wt
+			}
+		}
+	}
+	if ns.Models != nil {
+		for id, mod := range ns.Models {
+			m.manager.SetModel(config.AgentID(id), mod)
+		}
+		m.session.Models = map[string]string{}
+		for k, v := range ns.Models {
+			m.session.Models[k] = v
+		}
+	}
+	if ns.Notes != nil {
+		m.session.Notes = map[string]string{}
+		for k, v := range ns.Notes {
+			m.session.Notes[k] = v
+		}
+	}
+	if ns.Pins != nil {
+		m.session.Pins = map[string]string{}
+		for k, v := range ns.Pins {
+			m.session.Pins[k] = v
 		}
 	}
 	if len(ns.PromptHist) > 0 {
@@ -702,7 +748,17 @@ func (m Model) loadNamedSessionCycle() (tea.Model, tea.Cmd) {
 	}
 	m.session.LastAgentID = m.activeID
 	_ = config.SaveSession(m.session)
-	m.statusMsg = fmt.Sprintf("loaded session %q", pick)
+	m.agents = m.manager.List()
+	if !strings.HasPrefix(m.statusMsg, "session ") {
+		m.statusMsg = fmt.Sprintf("loaded session %q", pick)
+	} else if !strings.Contains(m.statusMsg, "loaded") {
+		// keep cwd-missing warning, append name
+		m.statusMsg = fmt.Sprintf("loaded session %q (cwd missing)", pick)
+	} else {
+		m.statusMsg = fmt.Sprintf("loaded session %q", pick)
+	}
+	m.outFP = ""
+	m.outFP2 = ""
 	m.refreshViewport()
 	return m, nil
 }

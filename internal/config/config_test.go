@@ -253,3 +253,31 @@ func TestSaveSessionAtomic(t *testing.T) {
 		}
 	}
 }
+
+func TestNamedSessionRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	s := Session{
+		Named: map[string]NamedSession{
+			"feature-x": {
+				Cwd:        dir,
+				ActiveID:   AgentClaude,
+				Models:     map[string]string{"claude": "sonnet"},
+				Notes:      map[string]string{"claude": "auth work"},
+				Pins:       map[string]string{"1": "review"},
+				PromptHist: []string{"hi"},
+			},
+		},
+	}
+	if err := SaveSession(s); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSession()
+	ns, ok := got.Named["feature-x"]
+	if !ok {
+		t.Fatal("missing named")
+	}
+	if ns.Models["claude"] != "sonnet" || ns.Notes["claude"] != "auth work" || ns.Pins["1"] != "review" {
+		t.Fatalf("%+v", ns)
+	}
+}
